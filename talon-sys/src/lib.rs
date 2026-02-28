@@ -102,6 +102,7 @@ pub mod fts {
 
 // ── Raw FFI 声明 ────────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 mod raw_ffi {
     use std::os::raw::{c_char, c_int};
 
@@ -333,6 +334,9 @@ impl Talon {
         if rc != 0 {
             return Err(TalonError("run_sql FFI failed".into()));
         }
+        if out.is_null() {
+            return Ok(String::from("{\"rows\":[]}"));
+        }
         let result = unsafe { CStr::from_ptr(out).to_string_lossy().into_owned() };
         unsafe { raw_ffi::talon_free_string(out) };
         Ok(result)
@@ -452,6 +456,7 @@ impl Talon {
                 query.as_ptr(), query.len(), k, c_metric.as_ptr(), &mut out)
         };
         if rc != 0 { return Err(TalonError("vector_search FFI failed".into())); }
+        if out.is_null() { return Ok(vec![]); }
         let json_str = unsafe { CStr::from_ptr(out).to_string_lossy().into_owned() };
         unsafe { raw_ffi::talon_free_string(out) };
         parse_vector_results(&json_str)
@@ -475,6 +480,9 @@ impl Talon {
         let mut out: *mut std::os::raw::c_char = ptr::null_mut();
         let rc = unsafe { raw_ffi::talon_execute(self.handle, c_cmd.as_ptr(), &mut out) };
         if rc != 0 { return Err(TalonError("execute FFI failed".into())); }
+        if out.is_null() {
+            return Err(TalonError("execute returned null output".into()));
+        }
         let json_str = unsafe { CStr::from_ptr(out).to_string_lossy().into_owned() };
         unsafe { raw_ffi::talon_free_string(out) };
         serde_json::from_str(&json_str)
