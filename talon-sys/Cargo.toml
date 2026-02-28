@@ -9,6 +9,10 @@ readme = "../README.md"
 keywords = ["database", "embedded", "vector", "ai", "ffi"]
 categories = ["database-implementations", "external-ffi-bindings"]
 
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
 [build-dependencies]
 reqwest = { version = "0.12", features = ["blocking"] }
 flate2 = "1"

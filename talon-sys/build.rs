@@ -3,11 +3,28 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    // ── 优先使用本地库路径（开发环境）──
+    // 设置 TALON_LIB_DIR 环境变量指向包含 libtalon.dylib/so 的目录，跳过下载。
+    // 例如：TALON_LIB_DIR=/path/to/superclaw-db/target/release cargo build
+    if let Ok(local_dir) = env::var("TALON_LIB_DIR") {
+        let path = PathBuf::from(&local_dir);
+        if path.exists() {
+            eprintln!("cargo:warning=Using local Talon library from {local_dir}");
+            println!("cargo:rustc-link-search=native={local_dir}");
+            println!("cargo:rustc-link-lib=dylib=talon");
+            set_rpath();
+            println!("cargo:rerun-if-changed=build.rs");
+            println!("cargo:rerun-if-env-changed=TALON_LIB_DIR");
+            return;
+        }
+        eprintln!("cargo:warning=TALON_LIB_DIR={local_dir} does not exist, falling back to download");
+    }
+
+    // ── 从 GitHub Release 下载预编译库 ──
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     let lib_dir = out_dir.join("talon-lib");
     fs::create_dir_all(&lib_dir).unwrap();
 
-    // Determine platform-specific library name
     let (target_name, lib_file) = match (env::consts::OS, env::consts::ARCH) {
         ("linux", "x86_64") => ("talon-linux-amd64", "libtalon.so"),
         ("linux", "aarch64") => ("talon-linux-arm64", "libtalon.so"),
@@ -20,7 +37,6 @@ fn main() {
 
     let lib_path = lib_dir.join(lib_file);
 
-    // Skip download if library already exists (cached build)
     if !lib_path.exists() {
         let version = env!("CARGO_PKG_VERSION");
         let archive_name = format!("libtalon-{target_name}.tar.gz");
@@ -47,7 +63,6 @@ fn main() {
 
         let bytes = response.bytes().expect("Failed to read response body");
 
-        // Extract tar.gz
         let decoder = flate2::read::GzDecoder::new(&bytes[..]);
         let mut archive = tar::Archive::new(decoder);
         archive
@@ -55,16 +70,17 @@ fn main() {
             .expect("Failed to extract library archive");
     }
 
-    // Tell cargo where to find the library
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     println!("cargo:rustc-link-lib=dylib=talon");
+    set_rpath();
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-env-changed=TALON_LIB_DIR");
+}
 
-    // Set rpath for runtime linking
+fn set_rpath() {
     if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
     } else if cfg!(target_os = "macos") {
         println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
     }
-
-    println!("cargo:rerun-if-changed=build.rs");
 }
