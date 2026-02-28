@@ -4,15 +4,15 @@ use std::path::PathBuf;
 
 fn main() {
     // ── 优先使用本地库路径（开发环境）──
-    // 设置 TALON_LIB_DIR 环境变量指向包含 libtalon.dylib/so 的目录，跳过下载。
+    // 设置 TALON_LIB_DIR 环境变量指向包含 libtalon.a 的目录，跳过下载。
     // 例如：TALON_LIB_DIR=/path/to/superclaw-db/target/release cargo build
     if let Ok(local_dir) = env::var("TALON_LIB_DIR") {
         let path = PathBuf::from(&local_dir);
         if path.exists() {
             eprintln!("cargo:warning=Using local Talon library from {local_dir}");
             println!("cargo:rustc-link-search=native={local_dir}");
-            println!("cargo:rustc-link-lib=dylib=talon");
-            set_rpath();
+            println!("cargo:rustc-link-lib=static=talon");
+            link_system_libs();
             println!("cargo:rerun-if-changed=build.rs");
             println!("cargo:rerun-if-env-changed=TALON_LIB_DIR");
             return;
@@ -26,10 +26,10 @@ fn main() {
     fs::create_dir_all(&lib_dir).unwrap();
 
     let (target_name, lib_file) = match (env::consts::OS, env::consts::ARCH) {
-        ("linux", "x86_64") => ("talon-linux-amd64", "libtalon.so"),
-        ("linux", "aarch64") => ("talon-linux-arm64", "libtalon.so"),
-        ("macos", "x86_64") => ("talon-macos-amd64", "libtalon.dylib"),
-        ("macos", "aarch64") => ("talon-macos-arm64", "libtalon.dylib"),
+        ("linux", "x86_64") => ("talon-linux-amd64", "libtalon.a"),
+        ("linux", "aarch64") => ("talon-linux-arm64", "libtalon.a"),
+        ("macos", "x86_64") => ("talon-macos-amd64", "libtalon.a"),
+        ("macos", "aarch64") => ("talon-macos-arm64", "libtalon.a"),
         (os, arch) => {
             panic!("Unsupported platform: {os}-{arch}. Talon supports linux/macos on x86_64/aarch64.");
         }
@@ -71,16 +71,21 @@ fn main() {
     }
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    println!("cargo:rustc-link-lib=dylib=talon");
-    set_rpath();
+    println!("cargo:rustc-link-lib=static=talon");
+    link_system_libs();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=TALON_LIB_DIR");
 }
 
-fn set_rpath() {
-    if cfg!(target_os = "linux") {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
-    } else if cfg!(target_os = "macos") {
-        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+/// 静态链接时需要显式链接系统库（Rust runtime 依赖）。
+fn link_system_libs() {
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-lib=framework=Security");
+        println!("cargo:rustc-link-lib=framework=CoreFoundation");
+        println!("cargo:rustc-link-lib=dylib=iconv");
+    } else if cfg!(target_os = "linux") {
+        println!("cargo:rustc-link-lib=dylib=pthread");
+        println!("cargo:rustc-link-lib=dylib=dl");
+        println!("cargo:rustc-link-lib=dylib=m");
     }
 }
