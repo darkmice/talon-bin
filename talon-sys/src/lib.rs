@@ -158,6 +158,10 @@ mod raw_ffi {
         pub fn talon_free_string(ptr: *mut c_char);
         pub fn talon_free_bytes(ptr: *mut u8, len: usize);
 
+        // ── Server 管理 ──
+        pub fn talon_start_server(handle: *const TalonHandle, tcp_addr: *const c_char) -> c_int;
+        pub fn talon_stop_server(handle: *const TalonHandle) -> c_int;
+
         // ── 二进制 FFI（零 JSON 开销）──
         pub fn talon_run_sql_bin(
             handle: *const TalonHandle, sql: *const c_char,
@@ -442,6 +446,29 @@ impl Talon {
         let rc = unsafe { raw_ffi::talon_persist(self.handle) };
         if rc != 0 {
             return Err(TalonError("persist FFI failed".into()));
+        }
+        Ok(())
+    }
+
+    /// 启动后台 TCP Server，供外部客户端工具连接。
+    ///
+    /// `addr` 为监听地址，如 `"127.0.0.1:7720"`。
+    /// 同一句柄只能启动一个 server，重复调用返回错误。
+    pub fn start_server(&self, addr: &str) -> Result<(), TalonError> {
+        let c_addr = CString::new(addr)?;
+        let rc = unsafe { raw_ffi::talon_start_server(self.handle, c_addr.as_ptr()) };
+        match rc {
+            0 => Ok(()),
+            -2 => Err(TalonError("Server already running".into())),
+            _ => Err(TalonError("start_server FFI failed".into())),
+        }
+    }
+
+    /// 停止后台 TCP Server。
+    pub fn stop_server(&self) -> Result<(), TalonError> {
+        let rc = unsafe { raw_ffi::talon_stop_server(self.handle) };
+        if rc != 0 {
+            return Err(TalonError("No server running".into()));
         }
         Ok(())
     }
