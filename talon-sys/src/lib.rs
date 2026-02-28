@@ -157,6 +157,23 @@ mod raw_ffi {
         ) -> c_int;
         pub fn talon_free_string(ptr: *mut c_char);
         pub fn talon_free_bytes(ptr: *mut u8, len: usize);
+
+        // ── 二进制 FFI（零 JSON 开销）──
+        pub fn talon_run_sql_bin(
+            handle: *const TalonHandle, sql: *const c_char,
+            out_data: *mut *mut u8, out_len: *mut usize,
+        ) -> c_int;
+        pub fn talon_run_sql_param_bin(
+            handle: *const TalonHandle, sql: *const c_char,
+            params: *const u8, params_len: usize,
+            out_data: *mut *mut u8, out_len: *mut usize,
+        ) -> c_int;
+        pub fn talon_vector_search_bin(
+            handle: *const TalonHandle, index_name: *const c_char,
+            vec_data: *const f32, vec_dim: usize, k: usize,
+            metric: *const c_char,
+            out_data: *mut *mut u8, out_len: *mut usize,
+        ) -> c_int;
     }
 }
 
@@ -312,34 +329,55 @@ impl Talon {
         Self::open(s)
     }
 
-    // ── SQL 执行 ──
+    // ── SQL 执行（二进制 FFI，零 JSON 开销）──
 
     /// 执行 SQL，返回 `Vec<Vec<Value>>`（与源码 Talon API 兼容）。
+    ///
+    /// 内部使用二进制 TLV 编码传输结果，消除 JSON 序列化开销。
     pub fn run_sql(&self, sql: &str) -> Result<Vec<Vec<Value>>, TalonError> {
-        let json_str = self.run_sql_raw(sql)?;
-        parse_sql_rows(&json_str)
-    }
-
-    /// 参数化 SQL：安全替换 `?` 占位符后执行。
-    pub fn run_sql_param(&self, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>, TalonError> {
-        let bound = bind_params(sql, params);
-        self.run_sql(&bound)
-    }
-
-    /// 原始 SQL 执行，返回 JSON 字符串。
-    fn run_sql_raw(&self, sql: &str) -> Result<String, TalonError> {
         let c_sql = CString::new(sql)?;
-        let mut out: *mut std::os::raw::c_char = ptr::null_mut();
-        let rc = unsafe { raw_ffi::talon_run_sql(self.handle, c_sql.as_ptr(), &mut out) };
+        let mut out_data: *mut u8 = ptr::null_mut();
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            raw_ffi::talon_run_sql_bin(self.handle, c_sql.as_ptr(), &mut out_data, &mut out_len)
+        };
         if rc != 0 {
             return Err(TalonError("run_sql FFI failed".into()));
         }
-        if out.is_null() {
-            return Ok(String::from("{\"rows\":[]}"));
+        if out_data.is_null() || out_len == 0 {
+            return Ok(vec![]);
         }
-        let result = unsafe { CStr::from_ptr(out).to_string_lossy().into_owned() };
-        unsafe { raw_ffi::talon_free_string(out) };
-        Ok(result)
+        let data = unsafe { slice::from_raw_parts(out_data, out_len) };
+        let result = decode_rows_bin(data);
+        unsafe { raw_ffi::talon_free_bytes(out_data, out_len) };
+        result
+    }
+
+    /// 参数化 SQL：参数用二进制编码传入引擎，引擎侧原生绑定。
+    ///
+    /// 消除了客户端 SQL 字符串拼接，安全性更高。
+    pub fn run_sql_param(&self, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>, TalonError> {
+        let c_sql = CString::new(sql)?;
+        let params_bin = encode_params(params);
+        let mut out_data: *mut u8 = ptr::null_mut();
+        let mut out_len: usize = 0;
+        let rc = unsafe {
+            raw_ffi::talon_run_sql_param_bin(
+                self.handle, c_sql.as_ptr(),
+                params_bin.as_ptr(), params_bin.len(),
+                &mut out_data, &mut out_len,
+            )
+        };
+        if rc != 0 {
+            return Err(TalonError("run_sql_param FFI failed".into()));
+        }
+        if out_data.is_null() || out_len == 0 {
+            return Ok(vec![]);
+        }
+        let data = unsafe { slice::from_raw_parts(out_data, out_len) };
+        let result = decode_rows_bin(data);
+        unsafe { raw_ffi::talon_free_bytes(out_data, out_len) };
+        result
     }
 
     // ── 引擎访问器 ──
@@ -450,16 +488,21 @@ impl Talon {
     fn raw_vector_search(&self, index: &str, query: &[f32], k: usize, metric: &str) -> Result<Vec<(u64, f32)>, TalonError> {
         let c_name = CString::new(index)?;
         let c_metric = CString::new(metric)?;
-        let mut out: *mut std::os::raw::c_char = ptr::null_mut();
+        let mut out_data: *mut u8 = ptr::null_mut();
+        let mut out_len: usize = 0;
         let rc = unsafe {
-            raw_ffi::talon_vector_search(self.handle, c_name.as_ptr(),
-                query.as_ptr(), query.len(), k, c_metric.as_ptr(), &mut out)
+            raw_ffi::talon_vector_search_bin(
+                self.handle, c_name.as_ptr(),
+                query.as_ptr(), query.len(), k, c_metric.as_ptr(),
+                &mut out_data, &mut out_len,
+            )
         };
         if rc != 0 { return Err(TalonError("vector_search FFI failed".into())); }
-        if out.is_null() { return Ok(vec![]); }
-        let json_str = unsafe { CStr::from_ptr(out).to_string_lossy().into_owned() };
-        unsafe { raw_ffi::talon_free_string(out) };
-        parse_vector_results(&json_str)
+        if out_data.is_null() || out_len == 0 { return Ok(vec![]); }
+        let data = unsafe { slice::from_raw_parts(out_data, out_len) };
+        let result = decode_vector_bin(data);
+        unsafe { raw_ffi::talon_free_bytes(out_data, out_len) };
+        result
     }
 
     /// 执行 JSON 命令（忽略返回值）。
@@ -513,106 +556,175 @@ pub fn hybrid_search(
     Ok(vec![])
 }
 
-// ── JSON 解析辅助 ───────────────────────────────────────────────────────────
+// ── 二进制编码/解码（TLV 格式）────────────────────────────────────────────
+//
+// Type tags: 0=Null, 1=Integer(i64), 2=Float(f64), 3=Text(u32+bytes),
+//            4=Blob(u32+bytes), 5=Boolean(u8), 6=Jsonb(u32+bytes),
+//            7=Vector(u32+f32*dim), 8=Timestamp(i64), 9=GeoPoint(f64,f64)
 
-/// 解析 `talon_run_sql` 返回的 JSON `{"rows": [[Value, ...], ...]}` 为 `Vec<Vec<Value>>`。
-fn parse_sql_rows(json: &str) -> Result<Vec<Vec<Value>>, TalonError> {
-    let parsed: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| TalonError(format!("SQL result JSON parse: {e}")))?;
-    let rows = parsed.get("rows")
-        .and_then(|r| r.as_array())
-        .ok_or_else(|| TalonError("SQL result missing 'rows'".into()))?;
-    let mut result = Vec::with_capacity(rows.len());
-    for row in rows {
-        let cols = row.as_array()
-            .ok_or_else(|| TalonError("Row is not array".into()))?;
-        let mut values = Vec::with_capacity(cols.len());
-        for col in cols {
-            let v: Value = serde_json::from_value(col.clone())
-                .unwrap_or(Value::Null);
-            values.push(v);
-        }
-        result.push(values);
+/// 将参数列表编码为二进制：`param_count: u32` + 每个参数的 TLV。
+fn encode_params(params: &[Value]) -> Vec<u8> {
+    let mut buf = Vec::with_capacity(4 + params.len() * 16);
+    buf.extend_from_slice(&(params.len() as u32).to_le_bytes());
+    for v in params {
+        encode_value(&mut buf, v);
     }
-    Ok(result)
+    buf
 }
 
-/// 解析向量搜索 JSON `{"results": [{"id": u64, "distance": f32}, ...]}`.
-fn parse_vector_results(json: &str) -> Result<Vec<(u64, f32)>, TalonError> {
-    let parsed: serde_json::Value = serde_json::from_str(json)
-        .map_err(|e| TalonError(format!("Vector result JSON parse: {e}")))?;
-    let items = parsed.get("results")
-        .and_then(|r| r.as_array())
-        .ok_or_else(|| TalonError("Vector result missing 'results'".into()))?;
-    let mut out = Vec::with_capacity(items.len());
-    for item in items {
-        let id = item.get("id").and_then(|v| v.as_u64()).unwrap_or(0);
-        let dist = item.get("distance").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+/// 编码单个 Value 到缓冲区。
+fn encode_value(buf: &mut Vec<u8>, val: &Value) {
+    match val {
+        Value::Null => buf.push(0),
+        Value::Integer(i) => { buf.push(1); buf.extend_from_slice(&i.to_le_bytes()); }
+        Value::Float(f) => { buf.push(2); buf.extend_from_slice(&f.to_le_bytes()); }
+        Value::Text(s) => {
+            buf.push(3);
+            let b = s.as_bytes();
+            buf.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            buf.extend_from_slice(b);
+        }
+        Value::Blob(b) => {
+            buf.push(4);
+            buf.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            buf.extend_from_slice(b);
+        }
+        Value::Boolean(b) => { buf.push(5); buf.push(if *b { 1 } else { 0 }); }
+        Value::Jsonb(j) => {
+            buf.push(6);
+            let s = j.to_string();
+            let b = s.as_bytes();
+            buf.extend_from_slice(&(b.len() as u32).to_le_bytes());
+            buf.extend_from_slice(b);
+        }
+        Value::Vector(v) => {
+            buf.push(7);
+            buf.extend_from_slice(&(v.len() as u32).to_le_bytes());
+            for f in v { buf.extend_from_slice(&f.to_le_bytes()); }
+        }
+        Value::Timestamp(t) => { buf.push(8); buf.extend_from_slice(&t.to_le_bytes()); }
+        Value::GeoPoint(lat, lon) => {
+            buf.push(9);
+            buf.extend_from_slice(&lat.to_le_bytes());
+            buf.extend_from_slice(&lon.to_le_bytes());
+        }
+    }
+}
+
+/// 解码二进制 SQL 结果：`row_count: u32, col_count: u32` + 每个 cell 的 TLV。
+fn decode_rows_bin(data: &[u8]) -> Result<Vec<Vec<Value>>, TalonError> {
+    if data.len() < 8 {
+        return Err(TalonError("binary result too short".into()));
+    }
+    let row_count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    let col_count = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+    let mut pos = 8;
+    let mut rows = Vec::with_capacity(row_count);
+    for _ in 0..row_count {
+        let mut row = Vec::with_capacity(col_count);
+        for _ in 0..col_count {
+            let (val, consumed) = decode_value(data, pos)?;
+            row.push(val);
+            pos += consumed;
+        }
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
+/// 解码二进制向量搜索结果：`count: u32` + 每条 `id: u64, distance: f32`。
+fn decode_vector_bin(data: &[u8]) -> Result<Vec<(u64, f32)>, TalonError> {
+    if data.len() < 4 {
+        return Err(TalonError("vector binary result too short".into()));
+    }
+    let count = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+    if data.len() < 4 + count * 12 {
+        return Err(TalonError("vector binary result truncated".into()));
+    }
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let off = 4 + i * 12;
+        let id = u64::from_le_bytes(data[off..off+8].try_into().unwrap());
+        let dist = f32::from_le_bytes(data[off+8..off+12].try_into().unwrap());
         out.push((id, dist));
     }
     Ok(out)
 }
 
-// ── 参数替换 ────────────────────────────────────────────────────────────────
-
-/// 安全的 SQL 参数替换：将 `?` 占位符替换为 Value 的 SQL 字面量。
-///
-/// 正确处理 SQL 字符串字面量（含转义引号 `''`，如 `'it''s a test'`），
-/// 确保字面量内部的 `?` 不被当作参数占位符。
-fn bind_params(sql: &str, params: &[Value]) -> String {
-    let mut result = String::with_capacity(sql.len() + params.len() * 16);
-    let mut idx = 0;
-    let mut chars = sql.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '?' && idx < params.len() {
-            result.push_str(&value_to_sql(&params[idx]));
-            idx += 1;
-        } else if ch == '\'' {
-            // 跳过 SQL 字符串字面量内的所有内容（含 '' 转义）
-            result.push(ch);
-            loop {
-                match chars.next() {
-                    Some('\'') => {
-                        result.push('\'');
-                        // '' 是转义引号，继续在字符串内
-                        if chars.peek() == Some(&'\'') {
-                            result.push(chars.next().unwrap());
-                        } else {
-                            break; // 单个 ' = 字符串结束
-                        }
-                    }
-                    Some(c) => result.push(c),
-                    None => break, // 未闭合字符串（容错）
-                }
-            }
-        } else {
-            result.push(ch);
-        }
+/// 解码单个 Value，返回 (value, consumed_bytes)。
+fn decode_value(data: &[u8], pos: usize) -> Result<(Value, usize), TalonError> {
+    if pos >= data.len() {
+        return Err(TalonError("unexpected end of binary data".into()));
     }
-    result
-}
-
-/// Value → SQL 字面量（防注入）。
-fn value_to_sql(v: &Value) -> String {
-    match v {
-        Value::Null => "NULL".to_string(),
-        Value::Integer(i) => i.to_string(),
-        Value::Float(f) => {
-            if f.is_nan() || f.is_infinite() { "NULL".to_string() }
-            else { format!("{f}") }
+    let tag = data[pos];
+    let off = pos + 1;
+    match tag {
+        0 => Ok((Value::Null, 1)),
+        1 => {
+            if off + 8 > data.len() { return Err(TalonError("truncated i64".into())); }
+            let v = i64::from_le_bytes(data[off..off+8].try_into().unwrap());
+            Ok((Value::Integer(v), 9))
         }
-        Value::Text(s) => format!("'{}'", s.replace('\'', "''")),
-        Value::Boolean(b) => if *b { "1" } else { "0" }.to_string(),
-        Value::Timestamp(t) => t.to_string(),
-        Value::Blob(b) => {
-            let hex: String = b.iter().map(|byte| format!("{byte:02x}")).collect();
-            format!("X'{hex}'")
+        2 => {
+            if off + 8 > data.len() { return Err(TalonError("truncated f64".into())); }
+            let v = f64::from_le_bytes(data[off..off+8].try_into().unwrap());
+            Ok((Value::Float(v), 9))
         }
-        Value::Jsonb(j) => format!("'{}'", j.to_string().replace('\'', "''")),
-        Value::Vector(v) => {
-            let inner: Vec<String> = v.iter().map(|f| f.to_string()).collect();
-            format!("'[{}]'", inner.join(","))
+        3 => {
+            if off + 4 > data.len() { return Err(TalonError("truncated text len".into())); }
+            let len = u32::from_le_bytes(data[off..off+4].try_into().unwrap()) as usize;
+            let start = off + 4;
+            if start + len > data.len() { return Err(TalonError("truncated text data".into())); }
+            let s = std::str::from_utf8(&data[start..start+len])
+                .map_err(|_| TalonError("invalid utf8 in text".into()))?;
+            Ok((Value::Text(s.to_string()), 5 + len))
         }
-        Value::GeoPoint(lat, lon) => format!("POINT({lat},{lon})"),
+        4 => {
+            if off + 4 > data.len() { return Err(TalonError("truncated blob len".into())); }
+            let len = u32::from_le_bytes(data[off..off+4].try_into().unwrap()) as usize;
+            let start = off + 4;
+            if start + len > data.len() { return Err(TalonError("truncated blob data".into())); }
+            Ok((Value::Blob(data[start..start+len].to_vec()), 5 + len))
+        }
+        5 => {
+            if off >= data.len() { return Err(TalonError("truncated bool".into())); }
+            Ok((Value::Boolean(data[off] != 0), 2))
+        }
+        6 => {
+            if off + 4 > data.len() { return Err(TalonError("truncated jsonb len".into())); }
+            let len = u32::from_le_bytes(data[off..off+4].try_into().unwrap()) as usize;
+            let start = off + 4;
+            if start + len > data.len() { return Err(TalonError("truncated jsonb data".into())); }
+            let s = std::str::from_utf8(&data[start..start+len])
+                .map_err(|_| TalonError("invalid utf8 in jsonb".into()))?;
+            let j: serde_json::Value = serde_json::from_str(s)
+                .map_err(|e| TalonError(format!("jsonb parse: {e}")))?;
+            Ok((Value::Jsonb(j), 5 + len))
+        }
+        7 => {
+            if off + 4 > data.len() { return Err(TalonError("truncated vec dim".into())); }
+            let dim = u32::from_le_bytes(data[off..off+4].try_into().unwrap()) as usize;
+            let start = off + 4;
+            let byte_len = dim * 4;
+            if start + byte_len > data.len() { return Err(TalonError("truncated vec data".into())); }
+            let mut v = Vec::with_capacity(dim);
+            for i in 0..dim {
+                let s = start + i * 4;
+                v.push(f32::from_le_bytes(data[s..s+4].try_into().unwrap()));
+            }
+            Ok((Value::Vector(v), 5 + byte_len))
+        }
+        8 => {
+            if off + 8 > data.len() { return Err(TalonError("truncated timestamp".into())); }
+            let v = i64::from_le_bytes(data[off..off+8].try_into().unwrap());
+            Ok((Value::Timestamp(v), 9))
+        }
+        9 => {
+            if off + 16 > data.len() { return Err(TalonError("truncated geopoint".into())); }
+            let lat = f64::from_le_bytes(data[off..off+8].try_into().unwrap());
+            let lon = f64::from_le_bytes(data[off+8..off+16].try_into().unwrap());
+            Ok((Value::GeoPoint(lat, lon), 17))
+        }
+        _ => Err(TalonError(format!("unknown binary type tag: {tag}"))),
     }
 }
