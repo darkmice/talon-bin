@@ -1,0 +1,15 @@
+[package]
+name = "talon-sys"
+version = "0.1.2"
+edition = "2021"
+description = "FFI bindings to Talon — AI-native multi-model data engine"
+license = "MIT"
+repository = "https://github.com/darkmice/talon-bin"
+readme = "../README.md"
+keywords = ["database", "embedded", "vector", "ai", "ffi"]
+categories = ["database-implementations", "external-ffi-bindings"]
+
+[build-dependencies]
+reqwest = { version = "0.12", features = ["blocking"] }
+flate2 = "1"
+tar = "0.4"
