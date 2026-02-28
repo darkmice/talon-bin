@@ -548,6 +548,9 @@ fn parse_vector_results(json: &str) -> Result<Vec<(u64, f32)>, TalonError> {
 // ── 参数替换 ────────────────────────────────────────────────────────────────
 
 /// 安全的 SQL 参数替换：将 `?` 占位符替换为 Value 的 SQL 字面量。
+///
+/// 正确处理 SQL 字符串字面量（含转义引号 `''`，如 `'it''s a test'`），
+/// 确保字面量内部的 `?` 不被当作参数占位符。
 fn bind_params(sql: &str, params: &[Value]) -> String {
     let mut result = String::with_capacity(sql.len() + params.len() * 16);
     let mut idx = 0;
@@ -557,11 +560,22 @@ fn bind_params(sql: &str, params: &[Value]) -> String {
             result.push_str(&value_to_sql(&params[idx]));
             idx += 1;
         } else if ch == '\'' {
-            // 跳过字符串字面量内的 '?'
+            // 跳过 SQL 字符串字面量内的所有内容（含 '' 转义）
             result.push(ch);
-            for c in chars.by_ref() {
-                result.push(c);
-                if c == '\'' { break; }
+            loop {
+                match chars.next() {
+                    Some('\'') => {
+                        result.push('\'');
+                        // '' 是转义引号，继续在字符串内
+                        if chars.peek() == Some(&'\'') {
+                            result.push(chars.next().unwrap());
+                        } else {
+                            break; // 单个 ' = 字符串结束
+                        }
+                    }
+                    Some(c) => result.push(c),
+                    None => break, // 未闭合字符串（容错）
+                }
             }
         } else {
             result.push(ch);
