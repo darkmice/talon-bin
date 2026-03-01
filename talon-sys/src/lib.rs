@@ -400,11 +400,11 @@ impl<'a> AiEngine<'a> {
             "module": "ai", "action": "get_session",
             "params": { "id": id }
         });
-        let resp = self.db.exec_cmd_json(&cmd)?;
+        let mut resp = self.db.exec_cmd_json(&cmd)?;
         let session = resp
-            .get("data")
-            .and_then(|d| d.get("session"))
-            .and_then(|s| serde_json::from_value::<Session>(s.clone()).ok());
+            .get_mut("data")
+            .and_then(|d| d.get_mut("session"))
+            .and_then(|s| serde_json::from_value::<Session>(s.take()).ok());
         Ok(session)
     }
 
@@ -442,11 +442,11 @@ impl<'a> AiEngine<'a> {
             "module": "ai", "action": "get_history",
             "params": { "session_id": session_id, "limit": limit }
         });
-        let resp = self.db.exec_cmd_json(&cmd)?;
+        let mut resp = self.db.exec_cmd_json(&cmd)?;
         let msgs = resp
-            .get("data")
-            .and_then(|d| d.get("messages"))
-            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.clone()).ok())
+            .get_mut("data")
+            .and_then(|d| d.get_mut("messages"))
+            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.take()).ok())
             .unwrap_or_default();
         Ok(msgs)
     }
@@ -461,11 +461,11 @@ impl<'a> AiEngine<'a> {
             "module": "ai", "action": "get_recent_messages",
             "params": { "session_id": session_id, "n": n }
         });
-        let resp = self.db.exec_cmd_json(&cmd)?;
+        let mut resp = self.db.exec_cmd_json(&cmd)?;
         let msgs = resp
-            .get("data")
-            .and_then(|d| d.get("messages"))
-            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.clone()).ok())
+            .get_mut("data")
+            .and_then(|d| d.get_mut("messages"))
+            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.take()).ok())
             .unwrap_or_default();
         Ok(msgs)
     }
@@ -480,11 +480,11 @@ impl<'a> AiEngine<'a> {
             "module": "ai", "action": "get_context_window_with_prompt",
             "params": { "session_id": session_id, "max_tokens": max_tokens }
         });
-        let resp = self.db.exec_cmd_json(&cmd)?;
+        let mut resp = self.db.exec_cmd_json(&cmd)?;
         let msgs = resp
-            .get("data")
-            .and_then(|d| d.get("messages"))
-            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.clone()).ok())
+            .get_mut("data")
+            .and_then(|d| d.get_mut("messages"))
+            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.take()).ok())
             .unwrap_or_default();
         Ok(msgs)
     }
