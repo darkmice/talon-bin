@@ -338,8 +338,220 @@ impl<'a> VectorEngine<'a> {
     }
 }
 
-/// AI 引擎包装（通过 execute 代理）。
-pub struct AiEngine;
+// ── AI 类型 ─────────────────────────────────────────────────────────────────
+
+/// Session 元数据。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Session {
+    pub id: String,
+    pub created_at: i64,
+    pub metadata: BTreeMap<String, String>,
+    #[serde(default)]
+    pub archived: bool,
+    pub expires_at: Option<i64>,
+}
+
+/// 上下文消息（对话历史中的一条）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextMessage {
+    pub role: String,
+    pub content: String,
+    pub timestamp: i64,
+    pub token_count: Option<u32>,
+}
+
+/// AI 引擎包装（通过 execute JSON 命令代理）。
+pub struct AiEngine<'a> {
+    db: &'a Talon,
+}
+
+impl<'a> AiEngine<'a> {
+    // ── Session ──
+
+    /// 创建 Session。
+    pub fn create_session(
+        &self,
+        id: &str,
+        metadata: BTreeMap<String, String>,
+        ttl_secs: Option<u64>,
+    ) -> Result<Session, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "create_session",
+            "params": { "id": id, "metadata": metadata, "ttl": ttl_secs }
+        });
+        self.db.exec_cmd(&cmd)?;
+        // Return a minimal Session (engine doesn't echo back the full object)
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        Ok(Session {
+            id: id.to_string(),
+            created_at: now_secs,
+            metadata,
+            archived: false,
+            expires_at: ttl_secs.map(|t| now_secs + t as i64),
+        })
+    }
+
+    /// 获取 Session。
+    pub fn get_session(&self, id: &str) -> Result<Option<Session>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "get_session",
+            "params": { "id": id }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let session = resp
+            .get("data")
+            .and_then(|d| d.get("session"))
+            .and_then(|s| serde_json::from_value::<Session>(s.clone()).ok());
+        Ok(session)
+    }
+
+    /// 删除 Session（级联删除 context + trace）。
+    pub fn delete_session(&self, id: &str) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "delete_session",
+            "params": { "id": id }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    // ── Context ──
+
+    /// 追加一条上下文消息。
+    pub fn append_message(
+        &self,
+        session_id: &str,
+        msg: &ContextMessage,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "append_message",
+            "params": { "session_id": session_id, "message": msg }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 获取对话历史（时间正序）。
+    pub fn get_history(
+        &self,
+        session_id: &str,
+        limit: Option<usize>,
+    ) -> Result<Vec<ContextMessage>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "get_history",
+            "params": { "session_id": session_id, "limit": limit }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let msgs = resp
+            .get("data")
+            .and_then(|d| d.get("messages"))
+            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.clone()).ok())
+            .unwrap_or_default();
+        Ok(msgs)
+    }
+
+    /// 获取最近 N 条消息（时间正序）。
+    pub fn get_recent_messages(
+        &self,
+        session_id: &str,
+        n: usize,
+    ) -> Result<Vec<ContextMessage>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "get_recent_messages",
+            "params": { "session_id": session_id, "n": n }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let msgs = resp
+            .get("data")
+            .and_then(|d| d.get("messages"))
+            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.clone()).ok())
+            .unwrap_or_default();
+        Ok(msgs)
+    }
+
+    /// 获取 token 预算窗口内的上下文（含 system_prompt + summary）。
+    pub fn get_context_window_with_prompt(
+        &self,
+        session_id: &str,
+        max_tokens: u32,
+    ) -> Result<Vec<ContextMessage>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "get_context_window_with_prompt",
+            "params": { "session_id": session_id, "max_tokens": max_tokens }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let msgs = resp
+            .get("data")
+            .and_then(|d| d.get("messages"))
+            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.clone()).ok())
+            .unwrap_or_default();
+        Ok(msgs)
+    }
+
+    /// 清空 Session 的全部上下文消息。
+    pub fn clear_context(&self, session_id: &str) -> Result<u64, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "clear_context",
+            "params": { "session_id": session_id }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let purged = resp
+            .get("data")
+            .and_then(|d| d.get("purged"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        Ok(purged)
+    }
+
+    // ── System Prompt / Context Summary ──
+
+    /// 设置 Session 的 System Prompt。
+    pub fn set_system_prompt(
+        &self,
+        session_id: &str,
+        prompt: &str,
+        token_count: u32,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "set_system_prompt",
+            "params": { "session_id": session_id, "prompt": prompt, "token_count": token_count }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 设置 Session 的上下文摘要。
+    pub fn set_context_summary(
+        &self,
+        session_id: &str,
+        summary: &str,
+        token_count: u32,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "set_context_summary",
+            "params": { "session_id": session_id, "summary": summary, "token_count": token_count }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 获取 Session 的上下文摘要。
+    pub fn get_context_summary(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<String>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "get_context_summary",
+            "params": { "session_id": session_id }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let summary = resp
+            .get("data")
+            .and_then(|d| d.get("summary"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        Ok(summary)
+    }
+}
 
 /// StoreRef 占位（hybrid search 参数兼容用）。
 pub struct StoreRef;
@@ -468,12 +680,12 @@ impl Talon {
         })
     }
     /// 获取 AI 引擎。
-    pub fn ai(&self) -> Result<AiEngine, TalonError> {
-        Ok(AiEngine)
+    pub fn ai(&self) -> Result<AiEngine<'_>, TalonError> {
+        Ok(AiEngine { db: self })
     }
     /// 获取 AI 引擎（读）。
-    pub fn ai_read(&self) -> Result<AiEngine, TalonError> {
-        Ok(AiEngine)
+    pub fn ai_read(&self) -> Result<AiEngine<'_>, TalonError> {
+        Ok(AiEngine { db: self })
     }
     /// StoreRef（hybrid search 兼容）。
     pub fn store_ref(&self) -> &StoreRef {
