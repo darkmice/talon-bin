@@ -32,9 +32,12 @@ fn main() {
         ("linux", "aarch64") => ("talon-linux-arm64", "libtalon.a"),
         ("macos", "x86_64") => ("talon-macos-amd64", "libtalon.a"),
         ("macos", "aarch64") => ("talon-macos-arm64", "libtalon.a"),
+        ("windows", "x86_64") => ("talon-windows-amd64", "talon.lib"),
+        ("linux", "loongarch64") => ("talon-linux-loongarch64", "libtalon.a"),
+        ("linux", "riscv64") | ("linux", "riscv64gc") => ("talon-linux-riscv64", "libtalon.a"),
         (os, arch) => {
             panic!(
-                "Unsupported platform: {os}-{arch}. Talon supports linux/macos on x86_64/aarch64."
+                "Unsupported platform: {os}-{arch}. Talon supports linux/macos/windows on x86_64/aarch64/loongarch64/riscv64."
             );
         }
     };
@@ -91,5 +94,10 @@ fn link_system_libs() {
         println!("cargo:rustc-link-lib=dylib=pthread");
         println!("cargo:rustc-link-lib=dylib=dl");
         println!("cargo:rustc-link-lib=dylib=m");
+    } else if cfg!(target_os = "windows") {
+        println!("cargo:rustc-link-lib=dylib=ws2_32");
+        println!("cargo:rustc-link-lib=dylib=bcrypt");
+        println!("cargo:rustc-link-lib=dylib=userenv");
+        println!("cargo:rustc-link-lib=dylib=ntdll");
     }
 }
