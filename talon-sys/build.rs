@@ -17,7 +17,9 @@ fn main() {
             println!("cargo:rerun-if-env-changed=TALON_LIB_DIR");
             return;
         }
-        eprintln!("cargo:warning=TALON_LIB_DIR={local_dir} does not exist, falling back to download");
+        eprintln!(
+            "cargo:warning=TALON_LIB_DIR={local_dir} does not exist, falling back to download"
+        );
     }
 
     // ── 从 GitHub Release 下载预编译库 ──
@@ -31,7 +33,9 @@ fn main() {
         ("macos", "x86_64") => ("talon-macos-amd64", "libtalon.a"),
         ("macos", "aarch64") => ("talon-macos-arm64", "libtalon.a"),
         (os, arch) => {
-            panic!("Unsupported platform: {os}-{arch}. Talon supports linux/macos on x86_64/aarch64.");
+            panic!(
+                "Unsupported platform: {os}-{arch}. Talon supports linux/macos on x86_64/aarch64."
+            );
         }
     };
 

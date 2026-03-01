@@ -115,44 +115,62 @@ mod raw_ffi {
         pub fn talon_open(path: *const c_char) -> *mut TalonHandle;
         pub fn talon_close(handle: *mut TalonHandle);
         pub fn talon_run_sql(
-            handle: *const TalonHandle, sql: *const c_char,
+            handle: *const TalonHandle,
+            sql: *const c_char,
             out_json: *mut *mut c_char,
         ) -> c_int;
         pub fn talon_kv_set(
             handle: *const TalonHandle,
-            key: *const u8, key_len: usize,
-            value: *const u8, value_len: usize, ttl_secs: i64,
+            key: *const u8,
+            key_len: usize,
+            value: *const u8,
+            value_len: usize,
+            ttl_secs: i64,
         ) -> c_int;
         pub fn talon_kv_get(
             handle: *const TalonHandle,
-            key: *const u8, key_len: usize,
-            out_value: *mut *mut u8, out_len: *mut usize,
+            key: *const u8,
+            key_len: usize,
+            out_value: *mut *mut u8,
+            out_len: *mut usize,
         ) -> c_int;
-        pub fn talon_kv_del(
-            handle: *const TalonHandle, key: *const u8, key_len: usize,
-        ) -> c_int;
+        pub fn talon_kv_del(handle: *const TalonHandle, key: *const u8, key_len: usize) -> c_int;
         pub fn talon_kv_incrby(
             handle: *const TalonHandle,
-            key: *const u8, key_len: usize, delta: i64, out_value: *mut i64,
+            key: *const u8,
+            key_len: usize,
+            delta: i64,
+            out_value: *mut i64,
         ) -> c_int;
         pub fn talon_kv_setnx(
             handle: *const TalonHandle,
-            key: *const u8, key_len: usize,
-            value: *const u8, value_len: usize,
-            ttl_secs: i64, was_set: *mut c_int,
+            key: *const u8,
+            key_len: usize,
+            value: *const u8,
+            value_len: usize,
+            ttl_secs: i64,
+            was_set: *mut c_int,
         ) -> c_int;
         pub fn talon_vector_insert(
-            handle: *const TalonHandle, index_name: *const c_char,
-            id: u64, vec_data: *const f32, vec_dim: usize,
+            handle: *const TalonHandle,
+            index_name: *const c_char,
+            id: u64,
+            vec_data: *const f32,
+            vec_dim: usize,
         ) -> c_int;
         pub fn talon_vector_search(
-            handle: *const TalonHandle, index_name: *const c_char,
-            vec_data: *const f32, vec_dim: usize, k: usize,
-            metric: *const c_char, out_json: *mut *mut c_char,
+            handle: *const TalonHandle,
+            index_name: *const c_char,
+            vec_data: *const f32,
+            vec_dim: usize,
+            k: usize,
+            metric: *const c_char,
+            out_json: *mut *mut c_char,
         ) -> c_int;
         pub fn talon_persist(handle: *const TalonHandle) -> c_int;
         pub fn talon_execute(
-            handle: *const TalonHandle, cmd_json: *const c_char,
+            handle: *const TalonHandle,
+            cmd_json: *const c_char,
             out_json: *mut *mut c_char,
         ) -> c_int;
         pub fn talon_free_string(ptr: *mut c_char);
@@ -164,19 +182,28 @@ mod raw_ffi {
 
         // ── 二进制 FFI（零 JSON 开销）──
         pub fn talon_run_sql_bin(
-            handle: *const TalonHandle, sql: *const c_char,
-            out_data: *mut *mut u8, out_len: *mut usize,
+            handle: *const TalonHandle,
+            sql: *const c_char,
+            out_data: *mut *mut u8,
+            out_len: *mut usize,
         ) -> c_int;
         pub fn talon_run_sql_param_bin(
-            handle: *const TalonHandle, sql: *const c_char,
-            params: *const u8, params_len: usize,
-            out_data: *mut *mut u8, out_len: *mut usize,
+            handle: *const TalonHandle,
+            sql: *const c_char,
+            params: *const u8,
+            params_len: usize,
+            out_data: *mut *mut u8,
+            out_len: *mut usize,
         ) -> c_int;
         pub fn talon_vector_search_bin(
-            handle: *const TalonHandle, index_name: *const c_char,
-            vec_data: *const f32, vec_dim: usize, k: usize,
+            handle: *const TalonHandle,
+            index_name: *const c_char,
+            vec_data: *const f32,
+            vec_dim: usize,
+            k: usize,
             metric: *const c_char,
-            out_data: *mut *mut u8, out_len: *mut usize,
+            out_data: *mut *mut u8,
+            out_len: *mut usize,
         ) -> c_int;
     }
 }
@@ -232,27 +259,36 @@ impl<'a> FtsEngine<'a> {
             "params": { "name": name, "doc_id": doc_id }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        Ok(resp.get("data")
+        Ok(resp
+            .get("data")
             .and_then(|d| d.get("deleted"))
             .and_then(|v| v.as_bool())
             .unwrap_or(false))
     }
     /// BM25 全文搜索。
-    pub fn search(&self, name: &str, query: &str, limit: usize) -> Result<Vec<SearchHit>, TalonError> {
+    pub fn search(
+        &self,
+        name: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchHit>, TalonError> {
         let cmd = serde_json::json!({
             "module": "fts", "action": "search",
             "params": { "name": name, "query": query, "limit": limit }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        let hits = resp.get("data")
+        let hits = resp
+            .get("data")
             .and_then(|d| d.get("hits"))
             .and_then(|h| h.as_array())
             .map(|arr| {
-                arr.iter().filter_map(|h| {
-                    let doc_id = h.get("doc_id")?.as_str()?.to_string();
-                    let score = h.get("score")?.as_f64()? as f32;
-                    Some(SearchHit { doc_id, score })
-                }).collect()
+                arr.iter()
+                    .filter_map(|h| {
+                        let doc_id = h.get("doc_id")?.as_str()?.to_string();
+                        let score = h.get("score")?.as_f64()? as f32;
+                        Some(SearchHit { doc_id, score })
+                    })
+                    .collect()
             })
             .unwrap_or_default();
         Ok(hits)
@@ -279,7 +315,12 @@ impl<'a> VectorEngine<'a> {
         self.db.exec_cmd(&cmd)
     }
     /// KNN 搜索，返回 (id, distance)。
-    pub fn search(&self, query: &[f32], k: usize, metric: &str) -> Result<Vec<(u64, f32)>, TalonError> {
+    pub fn search(
+        &self,
+        query: &[f32],
+        k: usize,
+        metric: &str,
+    ) -> Result<Vec<(u64, f32)>, TalonError> {
         self.db.raw_vector_search(&self.index, query, k, metric)
     }
     /// 向量数量。
@@ -289,7 +330,8 @@ impl<'a> VectorEngine<'a> {
             "params": { "index": &self.index }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        Ok(resp.get("data")
+        Ok(resp
+            .get("data")
             .and_then(|d| d.get("count"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0))
@@ -329,7 +371,9 @@ impl Talon {
 
     /// Open from `&Path`（兼容源码 Talon 签名）。
     pub fn open_path(path: &Path) -> Result<Self, TalonError> {
-        let s = path.to_str().ok_or_else(|| TalonError("Invalid UTF-8 path".into()))?;
+        let s = path
+            .to_str()
+            .ok_or_else(|| TalonError("Invalid UTF-8 path".into()))?;
         Self::open(s)
     }
 
@@ -360,16 +404,23 @@ impl Talon {
     /// 参数化 SQL：参数用二进制编码传入引擎，引擎侧原生绑定。
     ///
     /// 消除了客户端 SQL 字符串拼接，安全性更高。
-    pub fn run_sql_param(&self, sql: &str, params: &[Value]) -> Result<Vec<Vec<Value>>, TalonError> {
+    pub fn run_sql_param(
+        &self,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<Vec<Vec<Value>>, TalonError> {
         let c_sql = CString::new(sql)?;
         let params_bin = encode_params(params);
         let mut out_data: *mut u8 = ptr::null_mut();
         let mut out_len: usize = 0;
         let rc = unsafe {
             raw_ffi::talon_run_sql_param_bin(
-                self.handle, c_sql.as_ptr(),
-                params_bin.as_ptr(), params_bin.len(),
-                &mut out_data, &mut out_len,
+                self.handle,
+                c_sql.as_ptr(),
+                params_bin.as_ptr(),
+                params_bin.len(),
+                &mut out_data,
+                &mut out_len,
             )
         };
         if rc != 0 {
@@ -404,11 +455,17 @@ impl Talon {
     }
     /// 获取 Vector 引擎。
     pub fn vector(&self, index: &str) -> Result<VectorEngine<'_>, TalonError> {
-        Ok(VectorEngine { db: self, index: index.to_string() })
+        Ok(VectorEngine {
+            db: self,
+            index: index.to_string(),
+        })
     }
     /// 获取 Vector 引擎（读）。
     pub fn vector_read(&self, index: &str) -> Result<VectorEngine<'_>, TalonError> {
-        Ok(VectorEngine { db: self, index: index.to_string() })
+        Ok(VectorEngine {
+            db: self,
+            index: index.to_string(),
+        })
     }
     /// 获取 AI 引擎。
     pub fn ai(&self) -> Result<AiEngine, TalonError> {
@@ -479,10 +536,20 @@ impl Talon {
         let mut out_ptr: *mut u8 = ptr::null_mut();
         let mut out_len: usize = 0;
         let rc = unsafe {
-            raw_ffi::talon_kv_get(self.handle, key.as_ptr(), key.len(), &mut out_ptr, &mut out_len)
+            raw_ffi::talon_kv_get(
+                self.handle,
+                key.as_ptr(),
+                key.len(),
+                &mut out_ptr,
+                &mut out_len,
+            )
         };
-        if rc != 0 { return Err(TalonError("kv_get FFI failed".into())); }
-        if out_ptr.is_null() { return Ok(None); }
+        if rc != 0 {
+            return Err(TalonError("kv_get FFI failed".into()));
+        }
+        if out_ptr.is_null() {
+            return Ok(None);
+        }
         let data = unsafe { slice::from_raw_parts(out_ptr, out_len).to_vec() };
         unsafe { raw_ffi::talon_free_bytes(out_ptr, out_len) };
         Ok(Some(data))
@@ -490,16 +557,26 @@ impl Talon {
 
     fn raw_kv_set(&self, key: &[u8], value: &[u8], ttl_secs: i64) -> Result<(), TalonError> {
         let rc = unsafe {
-            raw_ffi::talon_kv_set(self.handle, key.as_ptr(), key.len(),
-                value.as_ptr(), value.len(), ttl_secs)
+            raw_ffi::talon_kv_set(
+                self.handle,
+                key.as_ptr(),
+                key.len(),
+                value.as_ptr(),
+                value.len(),
+                ttl_secs,
+            )
         };
-        if rc != 0 { return Err(TalonError("kv_set FFI failed".into())); }
+        if rc != 0 {
+            return Err(TalonError("kv_set FFI failed".into()));
+        }
         Ok(())
     }
 
     fn raw_kv_del(&self, key: &[u8]) -> Result<(), TalonError> {
         let rc = unsafe { raw_ffi::talon_kv_del(self.handle, key.as_ptr(), key.len()) };
-        if rc != 0 { return Err(TalonError("kv_del FFI failed".into())); }
+        if rc != 0 {
+            return Err(TalonError("kv_del FFI failed".into()));
+        }
         Ok(())
     }
 
@@ -508,24 +585,41 @@ impl Talon {
         let rc = unsafe {
             raw_ffi::talon_vector_insert(self.handle, c_name.as_ptr(), id, vec.as_ptr(), vec.len())
         };
-        if rc != 0 { return Err(TalonError("vector_insert FFI failed".into())); }
+        if rc != 0 {
+            return Err(TalonError("vector_insert FFI failed".into()));
+        }
         Ok(())
     }
 
-    fn raw_vector_search(&self, index: &str, query: &[f32], k: usize, metric: &str) -> Result<Vec<(u64, f32)>, TalonError> {
+    fn raw_vector_search(
+        &self,
+        index: &str,
+        query: &[f32],
+        k: usize,
+        metric: &str,
+    ) -> Result<Vec<(u64, f32)>, TalonError> {
         let c_name = CString::new(index)?;
         let c_metric = CString::new(metric)?;
         let mut out_data: *mut u8 = ptr::null_mut();
         let mut out_len: usize = 0;
         let rc = unsafe {
             raw_ffi::talon_vector_search_bin(
-                self.handle, c_name.as_ptr(),
-                query.as_ptr(), query.len(), k, c_metric.as_ptr(),
-                &mut out_data, &mut out_len,
+                self.handle,
+                c_name.as_ptr(),
+                query.as_ptr(),
+                query.len(),
+                k,
+                c_metric.as_ptr(),
+                &mut out_data,
+                &mut out_len,
             )
         };
-        if rc != 0 { return Err(TalonError("vector_search FFI failed".into())); }
-        if out_data.is_null() || out_len == 0 { return Ok(vec![]); }
+        if rc != 0 {
+            return Err(TalonError("vector_search FFI failed".into()));
+        }
+        if out_data.is_null() || out_len == 0 {
+            return Ok(vec![]);
+        }
         let data = unsafe { slice::from_raw_parts(out_data, out_len) };
         let result = decode_vector_bin(data);
         unsafe { raw_ffi::talon_free_bytes(out_data, out_len) };
@@ -538,7 +632,10 @@ impl Talon {
         if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
             Ok(())
         } else {
-            let msg = resp.get("error").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let msg = resp
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
             Err(TalonError(msg.to_string()))
         }
     }
@@ -549,14 +646,15 @@ impl Talon {
         let c_cmd = CString::new(cmd_str)?;
         let mut out: *mut std::os::raw::c_char = ptr::null_mut();
         let rc = unsafe { raw_ffi::talon_execute(self.handle, c_cmd.as_ptr(), &mut out) };
-        if rc != 0 { return Err(TalonError("execute FFI failed".into())); }
+        if rc != 0 {
+            return Err(TalonError("execute FFI failed".into()));
+        }
         if out.is_null() {
             return Err(TalonError("execute returned null output".into()));
         }
         let json_str = unsafe { CStr::from_ptr(out).to_string_lossy().into_owned() };
         unsafe { raw_ffi::talon_free_string(out) };
-        serde_json::from_str(&json_str)
-            .map_err(|e| TalonError(format!("JSON parse: {e}")))
+        serde_json::from_str(&json_str).map_err(|e| TalonError(format!("JSON parse: {e}")))
     }
 }
 
@@ -603,8 +701,14 @@ fn encode_params(params: &[Value]) -> Vec<u8> {
 fn encode_value(buf: &mut Vec<u8>, val: &Value) {
     match val {
         Value::Null => buf.push(0),
-        Value::Integer(i) => { buf.push(1); buf.extend_from_slice(&i.to_le_bytes()); }
-        Value::Float(f) => { buf.push(2); buf.extend_from_slice(&f.to_le_bytes()); }
+        Value::Integer(i) => {
+            buf.push(1);
+            buf.extend_from_slice(&i.to_le_bytes());
+        }
+        Value::Float(f) => {
+            buf.push(2);
+            buf.extend_from_slice(&f.to_le_bytes());
+        }
         Value::Text(s) => {
             buf.push(3);
             let b = s.as_bytes();
@@ -616,7 +720,10 @@ fn encode_value(buf: &mut Vec<u8>, val: &Value) {
             buf.extend_from_slice(&(b.len() as u32).to_le_bytes());
             buf.extend_from_slice(b);
         }
-        Value::Boolean(b) => { buf.push(5); buf.push(if *b { 1 } else { 0 }); }
+        Value::Boolean(b) => {
+            buf.push(5);
+            buf.push(if *b { 1 } else { 0 });
+        }
         Value::Jsonb(j) => {
             buf.push(6);
             let s = j.to_string();
@@ -627,9 +734,14 @@ fn encode_value(buf: &mut Vec<u8>, val: &Value) {
         Value::Vector(v) => {
             buf.push(7);
             buf.extend_from_slice(&(v.len() as u32).to_le_bytes());
-            for f in v { buf.extend_from_slice(&f.to_le_bytes()); }
+            for f in v {
+                buf.extend_from_slice(&f.to_le_bytes());
+            }
         }
-        Value::Timestamp(t) => { buf.push(8); buf.extend_from_slice(&t.to_le_bytes()); }
+        Value::Timestamp(t) => {
+            buf.push(8);
+            buf.extend_from_slice(&t.to_le_bytes());
+        }
         Value::GeoPoint(lat, lon) => {
             buf.push(9);
             buf.extend_from_slice(&lat.to_le_bytes());
@@ -671,8 +783,8 @@ fn decode_vector_bin(data: &[u8]) -> Result<Vec<(u64, f32)>, TalonError> {
     let mut out = Vec::with_capacity(count);
     for i in 0..count {
         let off = 4 + i * 12;
-        let id = u64::from_le_bytes(data[off..off+8].try_into().unwrap());
-        let dist = f32::from_le_bytes(data[off+8..off+12].try_into().unwrap());
+        let id = u64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+        let dist = f32::from_le_bytes(data[off + 8..off + 12].try_into().unwrap());
         out.push((id, dist));
     }
     Ok(out)
@@ -688,68 +800,94 @@ fn decode_value(data: &[u8], pos: usize) -> Result<(Value, usize), TalonError> {
     match tag {
         0 => Ok((Value::Null, 1)),
         1 => {
-            if off + 8 > data.len() { return Err(TalonError("truncated i64".into())); }
-            let v = i64::from_le_bytes(data[off..off+8].try_into().unwrap());
+            if off + 8 > data.len() {
+                return Err(TalonError("truncated i64".into()));
+            }
+            let v = i64::from_le_bytes(data[off..off + 8].try_into().unwrap());
             Ok((Value::Integer(v), 9))
         }
         2 => {
-            if off + 8 > data.len() { return Err(TalonError("truncated f64".into())); }
-            let v = f64::from_le_bytes(data[off..off+8].try_into().unwrap());
+            if off + 8 > data.len() {
+                return Err(TalonError("truncated f64".into()));
+            }
+            let v = f64::from_le_bytes(data[off..off + 8].try_into().unwrap());
             Ok((Value::Float(v), 9))
         }
         3 => {
-            if off + 4 > data.len() { return Err(TalonError("truncated text len".into())); }
-            let len = u32::from_le_bytes(data[off..off+4].try_into().unwrap()) as usize;
+            if off + 4 > data.len() {
+                return Err(TalonError("truncated text len".into()));
+            }
+            let len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
             let start = off + 4;
-            if start + len > data.len() { return Err(TalonError("truncated text data".into())); }
-            let s = std::str::from_utf8(&data[start..start+len])
+            if start + len > data.len() {
+                return Err(TalonError("truncated text data".into()));
+            }
+            let s = std::str::from_utf8(&data[start..start + len])
                 .map_err(|_| TalonError("invalid utf8 in text".into()))?;
             Ok((Value::Text(s.to_string()), 5 + len))
         }
         4 => {
-            if off + 4 > data.len() { return Err(TalonError("truncated blob len".into())); }
-            let len = u32::from_le_bytes(data[off..off+4].try_into().unwrap()) as usize;
+            if off + 4 > data.len() {
+                return Err(TalonError("truncated blob len".into()));
+            }
+            let len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
             let start = off + 4;
-            if start + len > data.len() { return Err(TalonError("truncated blob data".into())); }
-            Ok((Value::Blob(data[start..start+len].to_vec()), 5 + len))
+            if start + len > data.len() {
+                return Err(TalonError("truncated blob data".into()));
+            }
+            Ok((Value::Blob(data[start..start + len].to_vec()), 5 + len))
         }
         5 => {
-            if off >= data.len() { return Err(TalonError("truncated bool".into())); }
+            if off >= data.len() {
+                return Err(TalonError("truncated bool".into()));
+            }
             Ok((Value::Boolean(data[off] != 0), 2))
         }
         6 => {
-            if off + 4 > data.len() { return Err(TalonError("truncated jsonb len".into())); }
-            let len = u32::from_le_bytes(data[off..off+4].try_into().unwrap()) as usize;
+            if off + 4 > data.len() {
+                return Err(TalonError("truncated jsonb len".into()));
+            }
+            let len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
             let start = off + 4;
-            if start + len > data.len() { return Err(TalonError("truncated jsonb data".into())); }
-            let s = std::str::from_utf8(&data[start..start+len])
+            if start + len > data.len() {
+                return Err(TalonError("truncated jsonb data".into()));
+            }
+            let s = std::str::from_utf8(&data[start..start + len])
                 .map_err(|_| TalonError("invalid utf8 in jsonb".into()))?;
-            let j: serde_json::Value = serde_json::from_str(s)
-                .map_err(|e| TalonError(format!("jsonb parse: {e}")))?;
+            let j: serde_json::Value =
+                serde_json::from_str(s).map_err(|e| TalonError(format!("jsonb parse: {e}")))?;
             Ok((Value::Jsonb(j), 5 + len))
         }
         7 => {
-            if off + 4 > data.len() { return Err(TalonError("truncated vec dim".into())); }
-            let dim = u32::from_le_bytes(data[off..off+4].try_into().unwrap()) as usize;
+            if off + 4 > data.len() {
+                return Err(TalonError("truncated vec dim".into()));
+            }
+            let dim = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
             let start = off + 4;
             let byte_len = dim * 4;
-            if start + byte_len > data.len() { return Err(TalonError("truncated vec data".into())); }
+            if start + byte_len > data.len() {
+                return Err(TalonError("truncated vec data".into()));
+            }
             let mut v = Vec::with_capacity(dim);
             for i in 0..dim {
                 let s = start + i * 4;
-                v.push(f32::from_le_bytes(data[s..s+4].try_into().unwrap()));
+                v.push(f32::from_le_bytes(data[s..s + 4].try_into().unwrap()));
             }
             Ok((Value::Vector(v), 5 + byte_len))
         }
         8 => {
-            if off + 8 > data.len() { return Err(TalonError("truncated timestamp".into())); }
-            let v = i64::from_le_bytes(data[off..off+8].try_into().unwrap());
+            if off + 8 > data.len() {
+                return Err(TalonError("truncated timestamp".into()));
+            }
+            let v = i64::from_le_bytes(data[off..off + 8].try_into().unwrap());
             Ok((Value::Timestamp(v), 9))
         }
         9 => {
-            if off + 16 > data.len() { return Err(TalonError("truncated geopoint".into())); }
-            let lat = f64::from_le_bytes(data[off..off+8].try_into().unwrap());
-            let lon = f64::from_le_bytes(data[off+8..off+16].try_into().unwrap());
+            if off + 16 > data.len() {
+                return Err(TalonError("truncated geopoint".into()));
+            }
+            let lat = f64::from_le_bytes(data[off..off + 8].try_into().unwrap());
+            let lon = f64::from_le_bytes(data[off + 8..off + 16].try_into().unwrap());
             Ok((Value::GeoPoint(lat, lon), 17))
         }
         _ => Err(TalonError(format!("unknown binary type tag: {tag}"))),
