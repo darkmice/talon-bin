@@ -15,3 +15,13 @@ Thumbs.db
 # ===========================
 target/
 Cargo.lock
+
+# ===========================
+# AI Agents / IDEs
+# ===========================
+.agents
+.cursor
+.ida
+.kiro
+.windsurf
+.docs

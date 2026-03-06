@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Talon Contributors
+ * Author: dark.lijin@gmail.com
+ * Licensed under the Talon Community Dual License Agreement.
+ * See the LICENSE file in the project root for full license information.
+ */
 //! FFI bindings to Talon — AI-native multi-model data engine.
 //!
 //! Provides a source-compatible API with the native `talon` crate via C FFI,
