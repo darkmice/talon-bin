@@ -1,0 +1,23 @@
+[package]
+name = "talon-bundle"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Talon full bundle: core engine + AI extension (pre-compiled binary)"
+
+[dependencies]
+# Core engine (public, open source)
+talon = { path = "../../superclaw-db" }
+
+# AI extension (private, closed source, paid module)
+talon-ai = { path = "../../talon-ai" }
+
+# Used to auto-register AI handler at program startup
+ctor = "0.2"
+
+serde_json = "1"
+
+[lib]
+name = "talon"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib"]

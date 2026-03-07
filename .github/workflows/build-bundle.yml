@@ -1,0 +1,269 @@
+name: Build Talon Bundle (Core + AI)
+
+on:
+  workflow_dispatch:
+    inputs:
+      talon_core_ref:
+        description: 'Talon Core (superclaw-db) git ref (tag/branch/sha)'
+        required: true
+        default: 'main'
+      talon_ai_ref:
+        description: 'Talon AI git ref (tag/branch/sha)'
+        required: true
+        default: 'main'
+      release_tag:
+        description: 'Release tag name (e.g. v0.1.1)'
+        required: true
+        default: 'v0.1.1'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: talon-linux-amd64
+            lib_prefix: lib
+            lib_ext: a
+            dylib_ext: so
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: talon-linux-arm64
+            lib_prefix: lib
+            lib_ext: a
+            dylib_ext: so
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+            name: talon-macos-amd64
+            lib_prefix: lib
+            lib_ext: a
+            dylib_ext: dylib
+          - target: aarch64-apple-darwin
+            os: macos-15
+            name: talon-macos-arm64
+            lib_prefix: lib
+            lib_ext: a
+            dylib_ext: dylib
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            name: talon-windows-amd64
+            lib_prefix: ""
+            lib_ext: lib
+            dylib_ext: dll
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            name: talon-windows-arm64
+            lib_prefix: ""
+            lib_ext: lib
+            dylib_ext: dll
+          - target: loongarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            name: talon-linux-loongarch64
+            lib_prefix: lib
+            lib_ext: a
+            dylib_ext: so
+            use_cross: true
+          - target: riscv64gc-unknown-linux-gnu
+            os: ubuntu-latest
+            name: talon-linux-riscv64
+            lib_prefix: lib
+            lib_ext: a
+            dylib_ext: so
+            use_cross: true
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      # 0. Fail fast if the private repo token is not configured
+      - name: Verify TALON_AI_TOKEN is set
+        run: |
+          if [ -z "${{ secrets.TALON_AI_TOKEN }}" ]; then
+            echo "::error::TALON_AI_TOKEN secret is not configured. Cannot checkout private talon-ai repo."
+            exit 1
+          fi
+
+      # 1. Checkout talon-bin (this repo, contains talon-bundle and talon-sys)
+      - name: Checkout talon-bin
+        uses: actions/checkout@v4
+        with:
+          path: talon-bin
+
+      # 2. Checkout talon core (public, open source)
+      - name: Checkout Talon Core (superclaw-db)
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon
+          ref: ${{ inputs.talon_core_ref }}
+          path: superclaw-db
+
+      # 3. Checkout talon-ai (private, closed source) — 需要 PAT
+      - name: Checkout Talon AI (private)
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-ai
+          ref: ${{ inputs.talon_ai_ref }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-ai
+
+      # 4. Install Rust
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # 5. Install cross-compilation tools
+      - name: Install cross-compilation tools (apt)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install cross (Docker-based)
+        if: matrix.use_cross == true
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      # 6. Build talon-bundle (core + AI)
+      - name: Build (cargo)
+        if: matrix.use_cross != true
+        working-directory: talon-bin/talon-bundle
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Build (cross)
+        if: matrix.use_cross == true
+        working-directory: talon-bin/talon-bundle
+        run: cross build --release --target ${{ matrix.target }}
+
+      # 7. Package library
+      - name: Package library (Unix)
+        if: runner.os != 'Windows'
+        working-directory: talon-bin
+        run: |
+          mkdir -p dist-lib
+          cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} dist-lib/ 2>/dev/null || true
+          cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} dist-lib/ 2>/dev/null || true
+          cp ../superclaw-db/include/talon.h dist-lib/ 2>/dev/null || true
+          cd dist-lib && tar czf libtalon-${{ matrix.name }}.tar.gz * && cd ..
+
+      - name: Package library (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: talon-bin
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-lib
+          Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon.lib dist-lib/ -ErrorAction SilentlyContinue
+          Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon.dll dist-lib/ -ErrorAction SilentlyContinue
+          Copy-Item ../superclaw-db/include/talon.h dist-lib/ -ErrorAction SilentlyContinue
+          cd dist-lib; tar czf libtalon-${{ matrix.name }}.tar.gz *; cd ..
+
+      # 8. Upload artifacts
+      - name: Upload library artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtalon-${{ matrix.name }}
+          path: talon-bin/dist-lib/libtalon-${{ matrix.name }}.tar.gz
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -name '*.tar.gz' -exec cp {} release/ \;
+          ls -la release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum *.tar.gz > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: "Talon ${{ inputs.release_tag }} (with AI)"
+          body: |
+            ## Talon ${{ inputs.release_tag }}
+
+            AI-native multi-model data engine: SQL + KV + TimeSeries + MQ + Vector + Graph + Geo + FTS + **AI Engine**.
+
+            This release bundles the paid AI extension (Session/Context/Memory/RAG/Agent/Intent/Trace).
+            AI features require a valid license. Core features work without a license.
+
+            ### Libraries (for embedding via FFI / Rust)
+
+            | Platform | Architecture | File |
+            |----------|-------------|------|
+            | Linux | x86_64 | `libtalon-talon-linux-amd64.tar.gz` |
+            | Linux | aarch64 | `libtalon-talon-linux-arm64.tar.gz` |
+            | macOS | x86_64 | `libtalon-talon-macos-amd64.tar.gz` |
+            | macOS | aarch64 (Apple Silicon) | `libtalon-talon-macos-arm64.tar.gz` |
+            | Windows | x86_64 | `libtalon-talon-windows-amd64.tar.gz` |
+            | Windows | aarch64 (ARM) | `libtalon-talon-windows-arm64.tar.gz` |
+            | Linux | loongarch64 (龙芯) | `libtalon-talon-linux-loongarch64.tar.gz` |
+            | Linux | riscv64 | `libtalon-talon-linux-riscv64.tar.gz` |
+
+            ### Rust usage
+            ```toml
+            [dependencies]
+            talon = { git = "https://github.com/darkmice/talon-bin.git", tag = "${{ inputs.release_tag }}", package = "talon-sys" }
+            ```
+
+            ### License activation
+            ```rust
+            // Set license key before using AI features
+            std::env::set_var("TALON_AI_LICENSE_KEY", "your-license-key");
+            ```
+
+            ### Verify checksums
+            ```bash
+            sha256sum -c SHA256SUMS.txt
+            ```
+          files: release/*
+          token: ${{ secrets.GITHUB_TOKEN }}
+          generate_release_notes: false
+
+  update-talon-sys:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout talon-bin
+        uses: actions/checkout@v4
+
+      - name: Download macOS ARM64 library
+        uses: actions/download-artifact@v4
+        with:
+          name: libtalon-talon-macos-arm64
+          path: /tmp/artifacts
+
+      - name: Update talon-sys build script
+        run: |
+          # Update the download tag in talon-sys/build.rs
+          sed -i "s|TALON_VERSION = \".*\"|TALON_VERSION = \"${{ inputs.release_tag }}\"|" talon-sys/build.rs || true
+          echo "Updated talon-sys to ${{ inputs.release_tag }}"
+
+      - name: Commit and tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: update to ${{ inputs.release_tag }} (with AI)"
+            git push
+          fi
+          git tag "${{ inputs.release_tag }}" || true
+          git push origin "${{ inputs.release_tag }}" || true
