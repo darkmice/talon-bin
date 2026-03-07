@@ -48,6 +48,15 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Update version in pyproject.toml
+        run: |
+          cd python
+          VERSION="${{ needs.check-trigger.outputs.version }}"
+          # Update version in pyproject.toml (determines native lib download URL)
+          sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" pyproject.toml
+          echo "Updated pyproject.toml version to ${VERSION}"
+          grep "^version" pyproject.toml
+
       - name: Build wheel and sdist
         run: |
           cd python
