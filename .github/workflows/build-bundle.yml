@@ -155,8 +155,9 @@ jobs:
         working-directory: talon-bin
         run: |
           mkdir -p dist-lib
-          cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} dist-lib/ 2>/dev/null || true
-          cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} dist-lib/ 2>/dev/null || true
+          # Copy and rename: talon_bundle → talon (external consumers expect libtalon.a)
+          cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle.${{ matrix.lib_ext }} dist-lib/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} 2>/dev/null || true
+          cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle.${{ matrix.dylib_ext }} dist-lib/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} 2>/dev/null || true
           cp ../superclaw-db/include/talon.h dist-lib/ 2>/dev/null || true
           cd dist-lib && tar czf libtalon-${{ matrix.name }}.tar.gz * && cd ..
 
@@ -166,8 +167,9 @@ jobs:
         working-directory: talon-bin
         run: |
           New-Item -ItemType Directory -Force -Path dist-lib
-          Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon.lib dist-lib/ -ErrorAction SilentlyContinue
-          Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon.dll dist-lib/ -ErrorAction SilentlyContinue
+          # Rename talon_bundle → talon for distribution
+          Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon_bundle.lib dist-lib/talon.lib -ErrorAction SilentlyContinue
+          Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon_bundle.dll dist-lib/talon.dll -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/include/talon.h dist-lib/ -ErrorAction SilentlyContinue
           cd dist-lib; tar czf libtalon-${{ matrix.name }}.tar.gz *; cd ..
 
