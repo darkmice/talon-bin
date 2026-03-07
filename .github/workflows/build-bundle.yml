@@ -89,6 +89,7 @@ jobs:
     steps:
       # 0. Fail fast if the private repo token is not configured
       - name: Verify TALON_AI_TOKEN is set
+        shell: bash
         run: |
           if [ -z "${{ secrets.TALON_AI_TOKEN }}" ]; then
             echo "::error::TALON_AI_TOKEN secret is not configured. Cannot checkout private talon-ai repo."
