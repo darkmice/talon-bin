@@ -1,0 +1,206 @@
+name: Publish SDK Packages
+
+on:
+  # Trigger after build-bundle completes
+  workflow_run:
+    workflows: ["Build Talon Bundle (Core + AI)"]
+    types: [completed]
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (without v prefix, e.g. 0.1.1)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  check-trigger:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    outputs:
+      version: ${{ steps.ver.outputs.VERSION }}
+    steps:
+      - name: Extract version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            # Extract version from the release tag created by build-bundle
+            TAG="${{ github.event.workflow_run.head_branch }}"
+            echo "VERSION=${TAG#v}" >> $GITHUB_OUTPUT
+          fi
+
+  publish-python:
+    needs: check-trigger
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout talon-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-sdk
+          token: ${{ secrets.TALON_BIN_TOKEN }}
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Build wheel and sdist
+        run: |
+          cd python
+          pip install setuptools wheel build
+          python -m build
+          echo "--- Built artifacts ---"
+          ls -lh dist/
+          WHEEL_SIZE=$(stat -c%s dist/*.whl 2>/dev/null || stat -f%z dist/*.whl)
+          if [ "$WHEEL_SIZE" -gt 1048576 ]; then
+            echo "ERROR: Wheel is ${WHEEL_SIZE} bytes (>1MB), native lib may be accidentally bundled!"
+            exit 1
+          fi
+
+      - name: Publish to PyPI
+        run: |
+          cd python
+          pip install twine
+          twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+
+  publish-nodejs:
+    needs: check-trigger
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout talon-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-sdk
+          token: ${{ secrets.TALON_BIN_TOKEN }}
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Update version
+        run: |
+          cd nodejs
+          npm version ${{ needs.check-trigger.outputs.version }} --no-git-tag-version --allow-same-version
+
+      - name: Publish to npm
+        run: |
+          cd nodejs
+          npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-nuget:
+    needs: check-trigger
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout talon-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-sdk
+          token: ${{ secrets.TALON_BIN_TOKEN }}
+          ref: main
+
+      - name: Download all native libs
+        run: |
+          VERSION="${{ needs.check-trigger.outputs.version }}"
+          cd dotnet/Talon
+          for pair in "talon-macos-arm64:osx-arm64:libtalon.dylib" \
+                      "talon-macos-amd64:osx-x64:libtalon.dylib" \
+                      "talon-linux-amd64:linux-x64:libtalon.so" \
+                      "talon-linux-arm64:linux-arm64:libtalon.so" \
+                      "talon-windows-amd64:win-x64:talon.dll" \
+                      "talon-windows-arm64:win-arm64:talon.dll" \
+                      "talon-linux-loongarch64:linux-loongarch64:libtalon.so" \
+                      "talon-linux-riscv64:linux-riscv64:libtalon.so"; do
+            NAME="${pair%%:*}"
+            REST="${pair#*:}"
+            RID="${REST%%:*}"
+            LIB="${REST#*:}"
+            mkdir -p "runtimes/${RID}/native"
+            curl -fSL --retry 3 \
+              "https://github.com/darkmice/talon-bin/releases/download/v${VERSION}/libtalon-${NAME}.tar.gz" \
+              -o /tmp/lib.tar.gz
+            tar -xzf /tmp/lib.tar.gz -C "runtimes/${RID}/native/"
+            echo "✓ runtimes/${RID}/native/${LIB}"
+          done
+          find runtimes -type f | sort
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Pack NuGet
+        run: |
+          cd dotnet/Talon
+          dotnet pack -c Release -p:Version=${{ needs.check-trigger.outputs.version }} -o ../../nupkg
+
+      - name: Publish to NuGet
+        run: |
+          dotnet nuget push nupkg/*.nupkg \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
+
+  publish-java:
+    needs: check-trigger
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout talon-sdk
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-sdk
+          token: ${{ secrets.TALON_BIN_TOKEN }}
+          ref: main
+
+      - name: Download native libs to resources
+        run: |
+          VERSION="${{ needs.check-trigger.outputs.version }}"
+          cd java
+          for pair in "talon-macos-arm64:darwin/arm64:libtalon.dylib" \
+                      "talon-macos-amd64:darwin/amd64:libtalon.dylib" \
+                      "talon-linux-amd64:linux/amd64:libtalon.so" \
+                      "talon-linux-arm64:linux/arm64:libtalon.so" \
+                      "talon-windows-amd64:windows/amd64:talon.dll" \
+                      "talon-windows-arm64:windows/arm64:talon.dll" \
+                      "talon-linux-loongarch64:linux/loongarch64:libtalon.so" \
+                      "talon-linux-riscv64:linux/riscv64:libtalon.so"; do
+            NAME="${pair%%:*}"
+            REST="${pair#*:}"
+            DIR="${REST%%:*}"
+            LIB="${REST#*:}"
+            mkdir -p "src/main/resources/native/${DIR}"
+            curl -fSL --retry 3 \
+              "https://github.com/darkmice/talon-bin/releases/download/v${VERSION}/libtalon-${NAME}.tar.gz" \
+              -o /tmp/lib.tar.gz
+            tar -xzf /tmp/lib.tar.gz -C "src/main/resources/native/${DIR}/"
+            echo "✓ native/${DIR}/${LIB}"
+          done
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          server-id: ossrh
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_PASSWORD
+          gpg-private-key: ${{ secrets.MAVEN_GPG_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Set version and deploy
+        run: |
+          cd java
+          mvn versions:set -DnewVersion=${{ needs.check-trigger.outputs.version }}
+          mvn clean deploy -P release -DskipTests
+        env:
+          MAVEN_USERNAME: ${{ secrets.OSSRH_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.OSSRH_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.MAVEN_GPG_PASSPHRASE }}
