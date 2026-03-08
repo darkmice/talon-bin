@@ -17,7 +17,17 @@ fn main() {
         if path.exists() {
             eprintln!("cargo:warning=Using local Talon library from {local_dir}");
             println!("cargo:rustc-link-search=native={local_dir}");
-            println!("cargo:rustc-link-lib=static=talon");
+            // macOS: -force_load 确保 ctor 注册函数不被链接器丢弃
+            if cfg!(target_os = "macos") {
+                let lib_full = format!("{local_dir}/libtalon.a");
+                println!("cargo:rustc-link-arg=-Wl,-force_load,{lib_full}");
+            } else if cfg!(target_os = "linux") {
+                println!("cargo:rustc-link-arg=-Wl,--whole-archive");
+                println!("cargo:rustc-link-lib=static=talon");
+                println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+            } else {
+                println!("cargo:rustc-link-lib=static=talon");
+            }
             link_system_libs();
             println!("cargo:rerun-if-changed=build.rs");
             println!("cargo:rerun-if-env-changed=TALON_LIB_DIR");
@@ -84,7 +94,17 @@ fn main() {
     }
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    println!("cargo:rustc-link-lib=static=talon");
+    // macOS: -force_load 确保静态库中的 #[ctor] 函数（AI handler 注册）不被链接器丢弃
+    if cfg!(target_os = "macos") {
+        let lib_full = format!("{}/libtalon.a", lib_dir.display());
+        println!("cargo:rustc-link-arg=-Wl,-force_load,{lib_full}");
+    } else if cfg!(target_os = "linux") {
+        println!("cargo:rustc-link-arg=-Wl,--whole-archive");
+        println!("cargo:rustc-link-lib=static=talon");
+        println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+    } else {
+        println!("cargo:rustc-link-lib=static=talon");
+    }
     link_system_libs();
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=TALON_LIB_DIR");
