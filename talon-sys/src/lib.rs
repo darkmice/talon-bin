@@ -426,11 +426,7 @@ impl<'a> AiEngine<'a> {
     // ── Context ──
 
     /// 追加一条上下文消息。
-    pub fn append_message(
-        &self,
-        session_id: &str,
-        msg: &ContextMessage,
-    ) -> Result<(), TalonError> {
+    pub fn append_message(&self, session_id: &str, msg: &ContextMessage) -> Result<(), TalonError> {
         let cmd = serde_json::json!({
             "module": "ai", "action": "append_message",
             "params": { "session_id": session_id, "message": msg }
@@ -541,10 +537,7 @@ impl<'a> AiEngine<'a> {
     }
 
     /// 获取 Session 的上下文摘要。
-    pub fn get_context_summary(
-        &self,
-        session_id: &str,
-    ) -> Result<Option<String>, TalonError> {
+    pub fn get_context_summary(&self, session_id: &str) -> Result<Option<String>, TalonError> {
         let cmd = serde_json::json!({
             "module": "ai", "action": "get_context_summary",
             "params": { "session_id": session_id }
@@ -556,6 +549,163 @@ impl<'a> AiEngine<'a> {
             .and_then(|v| v.as_str())
             .map(|s| s.to_string());
         Ok(summary)
+    }
+
+    // ── Memory ──
+
+    /// 存储一条记忆（含 embedding 向量）。
+    pub fn store_memory(
+        &self,
+        content: &str,
+        metadata: &BTreeMap<String, String>,
+        embedding: &[f32],
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "store_memory",
+            "params": {
+                "entry": { "content": content, "metadata": metadata },
+                "embedding": embedding,
+            }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 语义搜索记忆。
+    pub fn search_memory(
+        &self,
+        embedding: &[f32],
+        k: usize,
+    ) -> Result<serde_json::Value, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "search_memory",
+            "params": { "embedding": embedding, "k": k }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("results"))
+            .cloned()
+            .unwrap_or(serde_json::json!([])))
+    }
+
+    /// 删除一条记忆。
+    pub fn delete_memory(&self, id: u64) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "delete_memory",
+            "params": { "id": id }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 获取记忆总数。
+    pub fn memory_count(&self) -> Result<u64, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "memory_count",
+            "params": {}
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+
+    /// 更新记忆内容和/或元数据。
+    pub fn update_memory(
+        &self,
+        id: u64,
+        content: Option<&str>,
+        metadata: Option<&BTreeMap<String, String>>,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "update_memory",
+            "params": { "id": id, "content": content, "metadata": metadata }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    // ── Trace ──
+
+    /// 记录 LLM 调用追踪。
+    pub fn log_trace(&self, record: &serde_json::Value) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "log_trace",
+            "params": { "record": record }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 按 Session 查询 traces。
+    pub fn query_traces_by_session(
+        &self,
+        session_id: &str,
+    ) -> Result<serde_json::Value, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "query_traces_by_session",
+            "params": { "session_id": session_id }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("traces"))
+            .cloned()
+            .unwrap_or(serde_json::json!([])))
+    }
+
+    /// 按 Run ID 查询 traces。
+    pub fn query_traces_by_run(&self, run_id: &str) -> Result<serde_json::Value, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "query_traces_by_run",
+            "params": { "run_id": run_id }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("traces"))
+            .cloned()
+            .unwrap_or(serde_json::json!([])))
+    }
+
+    /// Trace 聚合统计。
+    pub fn trace_stats(&self, session_id: Option<&str>) -> Result<serde_json::Value, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "trace_stats",
+            "params": { "session_id": session_id }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("stats"))
+            .cloned()
+            .unwrap_or(serde_json::json!({})))
+    }
+
+    // ── 通用 AI 命令执行 ──
+
+    /// 执行任意 AI 模块命令（不关心返回值）。
+    pub fn exec_ai_action(
+        &self,
+        action: &str,
+        params: &serde_json::Value,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": action, "params": params
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 执行任意 AI 模块命令，返回 data 部分。
+    pub fn query_ai_action(
+        &self,
+        action: &str,
+        params: &serde_json::Value,
+    ) -> Result<serde_json::Value, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": action, "params": params
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp.get("data").cloned().unwrap_or(serde_json::json!({})))
     }
 }
 
