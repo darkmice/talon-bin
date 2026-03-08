@@ -20,6 +20,7 @@ fn main() {
             // macOS: -force_load 确保 ctor 注册函数不被链接器丢弃
             if cfg!(target_os = "macos") {
                 let lib_full = format!("{local_dir}/libtalon.a");
+                println!("cargo:rustc-link-lib=static=talon");
                 println!("cargo:rustc-link-arg=-Wl,-force_load,{lib_full}");
             } else if cfg!(target_os = "linux") {
                 println!("cargo:rustc-link-arg=-Wl,--whole-archive");
@@ -97,6 +98,8 @@ fn main() {
     // macOS: -force_load 确保静态库中的 #[ctor] 函数（AI handler 注册）不被链接器丢弃
     if cfg!(target_os = "macos") {
         let lib_full = format!("{}/libtalon.a", lib_dir.display());
+        // 保留 -ltalon 提供符号，同时 -force_load 防止 ctor 被丢弃（两者都需要）
+        println!("cargo:rustc-link-lib=static=talon");
         println!("cargo:rustc-link-arg=-Wl,-force_load,{lib_full}");
     } else if cfg!(target_os = "linux") {
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
