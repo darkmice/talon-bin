@@ -214,6 +214,26 @@ mod raw_ffi {
     }
 }
 
+// ── AI Handler 主动注册（替代 ctor，绕开 macOS dead-stripping）──────────────
+
+extern "C" {
+    /// talon-bundle 导出的显式 AI handler 注册入口。
+    /// 由 talon-bundle/src/lib.rs 的 `#[no_mangle] pub extern "C" fn talon_bundle_init_ai()` 提供。
+    /// 通过直接调用（而非 ctor）触发注册，链接器不会 dead-strip 直接引用的函数。
+    fn talon_bundle_init_ai();
+}
+
+use std::sync::OnceLock;
+static AI_INIT: OnceLock<()> = OnceLock::new();
+
+/// 在 Talon::open 时调用，确保 AI handler 注册到路由器。
+/// 幂等：多次调用只执行一次（OnceLock 保证）。
+fn init_ai_handler() {
+    AI_INIT.get_or_init(|| unsafe {
+        talon_bundle_init_ai();
+    });
+}
+
 // ── 子引擎包装 ──────────────────────────────────────────────────────────────
 
 /// KV 引擎包装（持有 Talon 引用，代理 FFI 调用）。
@@ -728,6 +748,10 @@ impl Talon {
 
     /// Open a Talon database at the given path (string).
     pub fn open(path: impl AsRef<str>) -> Result<Self, TalonError> {
+        // 在打开数据库前，显式触发 AI handler 注册。
+        // talon_bundle_init_ai 是 talon-bundle 导出的 #[no_mangle] C ABI 函数，
+        // 链接器不会 dead-strip 被直接引用的函数（只有未被引用的 ctor 内容才会被剔除）。
+        init_ai_handler();
         let path_str = path.as_ref();
         let c_path = CString::new(path_str)?;
         let handle = unsafe { raw_ffi::talon_open(c_path.as_ptr()) };
