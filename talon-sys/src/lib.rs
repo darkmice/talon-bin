@@ -740,6 +740,215 @@ pub struct MqMessage {
     pub timestamp: u64,
 }
 
+/// Graph 顶点。
+#[derive(Debug, Clone)]
+pub struct GraphVertex {
+    pub id: u64,
+    pub label: String,
+    pub properties: std::collections::BTreeMap<String, String>,
+}
+
+/// Graph 边。
+#[derive(Debug, Clone)]
+pub struct GraphEdge {
+    pub id: u64,
+    pub from: u64,
+    pub to: u64,
+    pub label: String,
+    pub properties: std::collections::BTreeMap<String, String>,
+}
+
+/// Graph 引擎包装（通过 talon_execute JSON 命令代理）。
+pub struct GraphEngine<'a> {
+    db: &'a Talon,
+}
+
+impl<'a> GraphEngine<'a> {
+    /// 创建图（幂等）。
+    pub fn create(&self, graph: &str) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "create",
+            "params": { "graph": graph }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 添加顶点，返回 vertex_id。
+    pub fn add_vertex(
+        &self,
+        graph: &str,
+        label: &str,
+        properties: &std::collections::BTreeMap<String, String>,
+    ) -> Result<u64, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "add_vertex",
+            "params": { "graph": graph, "label": label, "properties": properties }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("vertex_id"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+
+    /// 更新顶点属性。
+    pub fn update_vertex(
+        &self,
+        graph: &str,
+        id: u64,
+        properties: &std::collections::BTreeMap<String, String>,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "update_vertex",
+            "params": { "graph": graph, "id": id, "properties": properties }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 获取顶点。
+    pub fn get_vertex(&self, graph: &str, id: u64) -> Result<Option<GraphVertex>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "get_vertex",
+            "params": { "graph": graph, "id": id }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let data = resp.get("data");
+        if data.map(|d| d.is_null()).unwrap_or(true) {
+            return Ok(None);
+        }
+        Ok(data.map(|d| parse_vertex(d)))
+    }
+
+    /// 按 label 查顶点。
+    pub fn vertices_by_label(
+        &self,
+        graph: &str,
+        label: &str,
+    ) -> Result<Vec<GraphVertex>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "vertices_by_label",
+            "params": { "graph": graph, "label": label }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let arr = resp
+            .get("data")
+            .and_then(|d| d.get("vertices"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(arr.iter().map(parse_vertex).collect())
+    }
+
+    /// 添加边，返回 edge_id。
+    pub fn add_edge(
+        &self,
+        graph: &str,
+        from: u64,
+        to: u64,
+        label: &str,
+        properties: &std::collections::BTreeMap<String, String>,
+    ) -> Result<u64, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "add_edge",
+            "params": {
+                "graph": graph, "from": from, "to": to,
+                "label": label, "properties": properties
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("edge_id"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+
+    /// 获取节点的出边。
+    pub fn out_edges(&self, graph: &str, id: u64) -> Result<Vec<GraphEdge>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "out_edges",
+            "params": { "graph": graph, "id": id }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let arr = resp
+            .get("data")
+            .and_then(|d| d.get("edges"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(arr.iter().map(parse_edge).collect())
+    }
+
+    /// 获取顶点数。
+    pub fn vertex_count(&self, graph: &str) -> Result<u64, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "vertex_count",
+            "params": { "graph": graph }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+}
+
+/// 解析 JSON 到 GraphVertex。
+fn parse_vertex(v: &serde_json::Value) -> GraphVertex {
+    GraphVertex {
+        id: v.get("id").and_then(|x| x.as_u64()).unwrap_or(0),
+        label: v
+            .get("label")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        properties: v
+            .get("properties")
+            .and_then(|x| x.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .map(|(k, val)| {
+                        (
+                            k.clone(),
+                            val.as_str().unwrap_or(&val.to_string()).to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// 解析 JSON 到 GraphEdge。
+fn parse_edge(v: &serde_json::Value) -> GraphEdge {
+    GraphEdge {
+        id: v.get("id").and_then(|x| x.as_u64()).unwrap_or(0),
+        from: v.get("from").and_then(|x| x.as_u64()).unwrap_or(0),
+        to: v.get("to").and_then(|x| x.as_u64()).unwrap_or(0),
+        label: v
+            .get("label")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string(),
+        properties: v
+            .get("properties")
+            .and_then(|x| x.as_object())
+            .map(|obj| {
+                obj.iter()
+                    .map(|(k, val)| {
+                        (
+                            k.clone(),
+                            val.as_str().unwrap_or(&val.to_string()).to_string(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
 /// MQ 引擎包装（通过 talon_execute JSON 命令代理）。
 pub struct MqEngine<'a> {
     db: &'a Talon,
@@ -1031,6 +1240,14 @@ impl Talon {
     /// 获取 MQ 引擎（读）。
     pub fn mq_read(&self) -> Result<MqEngine<'_>, TalonError> {
         Ok(MqEngine { db: self })
+    }
+    /// 获取 Graph 引擎（写）。
+    pub fn graph(&self) -> Result<GraphEngine<'_>, TalonError> {
+        Ok(GraphEngine { db: self })
+    }
+    /// 获取 Graph 引擎（读）。
+    pub fn graph_read(&self) -> Result<GraphEngine<'_>, TalonError> {
+        Ok(GraphEngine { db: self })
     }
     /// StoreRef（hybrid search 兼容）。
     pub fn store_ref(&self) -> &StoreRef {
