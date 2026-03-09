@@ -1,6 +1,6 @@
 [package]
 name = "talon-bundle"
-version = "0.1.4"
+version = "0.1.10"
 edition = "2021"
 publish = false
 description = "Talon full bundle: core engine + AI extension (pre-compiled binary)"
