@@ -729,6 +729,150 @@ impl<'a> AiEngine<'a> {
     }
 }
 
+/// MQ 消息（从 Talon MQ Engine 拉取）。
+#[derive(Debug, Clone)]
+pub struct MqMessage {
+    /// 消息 ID（递增）。
+    pub id: u64,
+    /// 消息载荷。
+    pub payload: Vec<u8>,
+    /// 发布时间戳（ms）。
+    pub timestamp: u64,
+}
+
+/// MQ 引擎包装（通过 talon_execute JSON 命令代理）。
+pub struct MqEngine<'a> {
+    db: &'a Talon,
+}
+
+impl<'a> MqEngine<'a> {
+    /// 创建 topic（幂等：已存在时不报错，但不会重置 next_id）。
+    pub fn create_topic(&self, topic: &str, max_len: u64) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq", "action": "create",
+            "params": { "topic": topic, "max_len": max_len }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 发布消息到 topic，返回消息 ID。
+    pub fn publish(&self, topic: &str, payload: &[u8]) -> Result<u64, TalonError> {
+        let payload_str = String::from_utf8_lossy(payload);
+        let cmd = serde_json::json!({
+            "module": "mq", "action": "publish",
+            "params": { "topic": topic, "payload": payload_str }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("id"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+
+    /// 发布延迟消息，返回消息 ID。
+    pub fn publish_delayed(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        delay_ms: u64,
+    ) -> Result<u64, TalonError> {
+        let payload_str = String::from_utf8_lossy(payload);
+        let cmd = serde_json::json!({
+            "module": "mq", "action": "publish",
+            "params": { "topic": topic, "payload": payload_str, "delay_ms": delay_ms }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("id"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+
+    /// 确认消息已消费。
+    pub fn ack(
+        &self,
+        topic: &str,
+        group: &str,
+        consumer: &str,
+        message_id: u64,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq", "action": "ack",
+            "params": {
+                "topic": topic, "group": group,
+                "consumer": consumer, "message_id": message_id
+            }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 拉取消息（非阻塞），返回消息列表。
+    pub fn poll(
+        &self,
+        topic: &str,
+        group: &str,
+        consumer: &str,
+        count: usize,
+    ) -> Result<Vec<MqMessage>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq", "action": "poll",
+            "params": {
+                "topic": topic, "group": group,
+                "consumer": consumer, "count": count
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let messages = resp
+            .get("data")
+            .and_then(|d| d.get("messages"))
+            .and_then(|m| m.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(messages
+            .into_iter()
+            .map(|m| MqMessage {
+                id: m.get("id").and_then(|v| v.as_u64()).unwrap_or(0),
+                payload: m
+                    .get("payload")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .as_bytes()
+                    .to_vec(),
+                timestamp: m.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0),
+            })
+            .collect())
+    }
+
+    /// 订阅 consumer group 到 topic（幂等）。
+    pub fn subscribe(&self, topic: &str, group: &str) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq", "action": "subscribe",
+            "params": { "topic": topic, "group": group }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 列出所有 topic 名称。
+    pub fn list_topics(&self) -> Result<Vec<String>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq", "action": "topics", "params": {}
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("topics"))
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+}
+
 /// StoreRef 占位（hybrid search 参数兼容用）。
 pub struct StoreRef;
 
@@ -767,6 +911,19 @@ impl Talon {
             .to_str()
             .ok_or_else(|| TalonError("Invalid UTF-8 path".into()))?;
         Self::open(s)
+    }
+
+    /// Open an anonymous (temp directory) database, useful for tests.
+    pub fn open_anon() -> Result<Self, TalonError> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "talon_anon_{}_{n}",
+            std::process::id()
+        ));
+        let _ = std::fs::create_dir_all(&dir);
+        Self::open(dir.to_string_lossy().as_ref())
     }
 
     // ── SQL 执行（二进制 FFI，零 JSON 开销）──
@@ -866,6 +1023,14 @@ impl Talon {
     /// 获取 AI 引擎（读）。
     pub fn ai_read(&self) -> Result<AiEngine<'_>, TalonError> {
         Ok(AiEngine { db: self })
+    }
+    /// 获取 MQ 引擎（写）。
+    pub fn mq(&self) -> Result<MqEngine<'_>, TalonError> {
+        Ok(MqEngine { db: self })
+    }
+    /// 获取 MQ 引擎（读）。
+    pub fn mq_read(&self) -> Result<MqEngine<'_>, TalonError> {
+        Ok(MqEngine { db: self })
     }
     /// StoreRef（hybrid search 兼容）。
     pub fn store_ref(&self) -> &StoreRef {
