@@ -645,7 +645,82 @@ impl<'a> AiEngine<'a> {
         self.db.exec_cmd(&cmd)
     }
 
-    // ── Trace ──
+    // ── Memory: Hybrid (推荐) ──
+
+    /// 存储记忆（自动 embed + 向量写 + FTS 索引 + 缓存）。
+    ///
+    /// 自动完成以下操作：
+    /// 1. 调用 Embedding API 生成向量（自带 FNV 哈希缓存）
+    /// 2. 写入向量索引（语义搜索）
+    /// 3. 写入 FTS 索引（关键词搜索）
+    /// 4. 存储元数据到 KV
+    ///
+    /// 需要先调用 `set_llm_config` 配置 embed provider。
+    pub fn add_memory(
+        &self,
+        content: &str,
+        metadata: &BTreeMap<String, String>,
+        ttl_secs: Option<u64>,
+    ) -> Result<u64, TalonError> {
+        let mut params = serde_json::json!({
+            "content": content,
+            "metadata": metadata,
+        });
+        if let Some(ttl) = ttl_secs {
+            params["ttl_secs"] = serde_json::json!(ttl);
+        }
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "add_memory",
+            "params": params
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("id"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+
+    /// 智能召回（hybrid search: BM25 + 向量，RRF 融合）。
+    ///
+    /// 两路检索融合：
+    /// - FTS BM25 路：关键词精确匹配
+    /// - Vector 路：语义相似度
+    /// - RRF 融合排序：基于排名融合
+    ///
+    /// 需要先调用 `set_llm_config` 配置 embed provider。
+    pub fn recall(
+        &self,
+        query: &str,
+        k: usize,
+        fts_weight: f64,
+        vec_weight: f64,
+    ) -> Result<serde_json::Value, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "recall",
+            "params": {
+                "query": query, "k": k,
+                "fts_weight": fts_weight, "vec_weight": vec_weight,
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("results"))
+            .cloned()
+            .unwrap_or(serde_json::json!([])))
+    }
+
+    // ── LLM Config ──
+
+    /// 配置引擎内置的 LLM/Embedding Provider。
+    pub fn set_llm_config(&self, config: &serde_json::Value) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "set_llm_config",
+            "params": { "config": config }
+        });
+        self.db.exec_cmd(&cmd)
+    }
 
     /// 记录 LLM 调用追踪。
     pub fn log_trace(&self, record: &serde_json::Value) -> Result<(), TalonError> {
