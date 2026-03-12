@@ -647,20 +647,23 @@ impl<'a> AiEngine<'a> {
 
     // ── Memory: Hybrid (推荐) ──
 
-    /// 存储记忆（自动 embed + 向量写 + FTS 索引 + 缓存）。
+    /// 存储记忆（自动 embed + 向量写 + FTS 索引 + 缓存 + 可选 EDU 提取）。
     ///
     /// 自动完成以下操作：
     /// 1. 调用 Embedding API 生成向量（自带 FNV 哈希缓存）
     /// 2. 写入向量索引（语义搜索）
     /// 3. 写入 FTS 索引（关键词搜索）
     /// 4. 存储元数据到 KV
+    /// 5. [可选] 用 LLM 提取 EDU（结构化事件单元），每个 EDU 独立 embed + 存储
     ///
     /// 需要先调用 `set_llm_config` 配置 embed provider。
+    /// 开启 `extract_facts` 时还需要 chat provider。
     pub fn add_memory(
         &self,
         content: &str,
         metadata: &BTreeMap<String, String>,
         ttl_secs: Option<u64>,
+        extract_facts: bool,
     ) -> Result<u64, TalonError> {
         let mut params = serde_json::json!({
             "content": content,
@@ -668,6 +671,9 @@ impl<'a> AiEngine<'a> {
         });
         if let Some(ttl) = ttl_secs {
             params["ttl_secs"] = serde_json::json!(ttl);
+        }
+        if extract_facts {
+            params["extract_facts"] = serde_json::json!(true);
         }
         let cmd = serde_json::json!({
             "module": "ai", "action": "add_memory",
@@ -688,6 +694,8 @@ impl<'a> AiEngine<'a> {
     /// - Vector 路：语义相似度
     /// - RRF 融合排序：基于排名融合
     ///
+    /// `temporal_boost`: 时间感知权重（0.0 = 关闭，推荐 0.3）。
+    ///
     /// 需要先调用 `set_llm_config` 配置 embed provider。
     pub fn recall(
         &self,
@@ -695,13 +703,30 @@ impl<'a> AiEngine<'a> {
         k: usize,
         fts_weight: f64,
         vec_weight: f64,
+        temporal_boost: f64,
+        rerank: bool,
+        rerank_top_k: Option<usize>,
+        graph_depth: usize,
     ) -> Result<serde_json::Value, TalonError> {
+        let mut params = serde_json::json!({
+            "query": query, "k": k,
+            "fts_weight": fts_weight, "vec_weight": vec_weight,
+        });
+        if temporal_boost > 0.0 {
+            params["temporal_boost"] = serde_json::json!(temporal_boost);
+        }
+        if rerank {
+            params["rerank"] = serde_json::json!(true);
+        }
+        if let Some(rtk) = rerank_top_k {
+            params["rerank_top_k"] = serde_json::json!(rtk);
+        }
+        if graph_depth > 0 {
+            params["graph_depth"] = serde_json::json!(graph_depth);
+        }
         let cmd = serde_json::json!({
             "module": "ai", "action": "recall",
-            "params": {
-                "query": query, "k": k,
-                "fts_weight": fts_weight, "vec_weight": vec_weight,
-            }
+            "params": params
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
         Ok(resp
