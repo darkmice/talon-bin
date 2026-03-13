@@ -858,6 +858,17 @@ pub struct GraphEdge {
     pub properties: std::collections::BTreeMap<String, String>,
 }
 
+/// Graph 遍历方向。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphDirection {
+    /// 仅出边方向。
+    Out,
+    /// 仅入边方向。
+    In,
+    /// 双向（出边 + 入边）。
+    Both,
+}
+
 /// Graph 引擎包装（通过 talon_execute JSON 命令代理）。
 pub struct GraphEngine<'a> {
     db: &'a Talon,
@@ -992,6 +1003,71 @@ impl<'a> GraphEngine<'a> {
             .and_then(|d| d.get("count"))
             .and_then(|v| v.as_u64())
             .unwrap_or(0))
+    }
+
+    /// 获取节点的入边。
+    pub fn in_edges(&self, graph: &str, id: u64) -> Result<Vec<GraphEdge>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "in_edges",
+            "params": { "graph": graph, "id": id }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let arr = resp
+            .get("data")
+            .and_then(|d| d.get("edges"))
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(arr.iter().map(parse_edge).collect())
+    }
+
+    /// 删除顶点（级联删除关联边）。
+    pub fn delete_vertex(&self, graph: &str, id: u64) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "delete_vertex",
+            "params": { "graph": graph, "id": id }
+        });
+        self.db.exec_cmd(&cmd)
+    }
+
+    /// 获取边数。
+    pub fn edge_count(&self, graph: &str) -> Result<u64, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "edge_count",
+            "params": { "graph": graph }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp
+            .get("data")
+            .and_then(|d| d.get("count"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+
+    /// 获取邻居节点 ID（按方向过滤）。
+    pub fn neighbors(
+        &self,
+        graph: &str,
+        vertex_id: u64,
+        direction: GraphDirection,
+    ) -> Result<Vec<u64>, TalonError> {
+        let dir_str = match direction {
+            GraphDirection::Out => "out",
+            GraphDirection::In => "in",
+            GraphDirection::Both => "both",
+        };
+        let cmd = serde_json::json!({
+            "module": "graph", "action": "neighbors",
+            "params": { "graph": graph, "id": vertex_id, "direction": dir_str }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let ids = resp
+            .get("data")
+            .and_then(|d| d.get("neighbors"))
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_u64()).collect())
+            .unwrap_or_default();
+        Ok(ids)
     }
 }
 
