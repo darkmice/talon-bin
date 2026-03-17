@@ -9,6 +9,9 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
+
     // ── 优先使用本地库路径（开发环境）──
     // 设置 TALON_LIB_DIR 环境变量指向包含 libtalon.a 的目录，跳过下载。
     // 例如：TALON_LIB_DIR=/path/to/superclaw-db/target/release cargo build
@@ -18,11 +21,11 @@ fn main() {
             eprintln!("cargo:warning=Using local Talon library from {local_dir}");
             println!("cargo:rustc-link-search=native={local_dir}");
             // macOS: -force_load 确保 ctor 注册函数不被链接器丢弃
-            if cfg!(target_os = "macos") {
+            if target_os == "macos" {
                 let lib_full = format!("{local_dir}/libtalon.a");
                 println!("cargo:rustc-link-lib=static=talon");
                 println!("cargo:rustc-link-arg=-Wl,-force_load,{lib_full}");
-            } else if cfg!(target_os = "linux") {
+            } else if target_os == "linux" {
                 println!("cargo:rustc-link-arg=-Wl,--whole-archive");
                 println!("cargo:rustc-link-lib=static=talon");
                 println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
@@ -44,7 +47,7 @@ fn main() {
     let lib_dir = out_dir.join("talon-lib");
     fs::create_dir_all(&lib_dir).unwrap();
 
-    let (target_name, lib_file) = match (env::consts::OS, env::consts::ARCH) {
+    let (target_name, lib_file) = match (target_os.as_str(), target_arch.as_str()) {
         ("linux", "x86_64") => ("talon-linux-amd64", "libtalon.a"),
         ("linux", "aarch64") => ("talon-linux-arm64", "libtalon.a"),
         ("macos", "x86_64") => ("talon-macos-amd64", "libtalon.a"),
@@ -96,12 +99,12 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
     // macOS: -force_load 确保静态库中的 #[ctor] 函数（AI handler 注册）不被链接器丢弃
-    if cfg!(target_os = "macos") {
+    if target_os == "macos" {
         let lib_full = format!("{}/libtalon.a", lib_dir.display());
         // 保留 -ltalon 提供符号，同时 -force_load 防止 ctor 被丢弃（两者都需要）
         println!("cargo:rustc-link-lib=static=talon");
         println!("cargo:rustc-link-arg=-Wl,-force_load,{lib_full}");
-    } else if cfg!(target_os = "linux") {
+    } else if target_os == "linux" {
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
         println!("cargo:rustc-link-lib=static=talon");
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
@@ -115,15 +118,16 @@ fn main() {
 
 /// 静态链接时需要显式链接系统库（Rust runtime 依赖）。
 fn link_system_libs() {
-    if cfg!(target_os = "macos") {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+    if target_os == "macos" {
         println!("cargo:rustc-link-lib=framework=Security");
         println!("cargo:rustc-link-lib=framework=CoreFoundation");
         println!("cargo:rustc-link-lib=dylib=iconv");
-    } else if cfg!(target_os = "linux") {
+    } else if target_os == "linux" {
         println!("cargo:rustc-link-lib=dylib=pthread");
         println!("cargo:rustc-link-lib=dylib=dl");
         println!("cargo:rustc-link-lib=dylib=m");
-    } else if cfg!(target_os = "windows") {
+    } else if target_os == "windows" {
         println!("cargo:rustc-link-lib=dylib=ws2_32");
         println!("cargo:rustc-link-lib=dylib=bcrypt");
         println!("cargo:rustc-link-lib=dylib=userenv");
