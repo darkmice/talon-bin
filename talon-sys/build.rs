@@ -101,12 +101,34 @@ fn main() {
         archive
             .unpack(&lib_dir)
             .expect("Failed to extract library archive");
+
+        // evocore archive ships files as libtalon.a / libtalon.dylib,
+        // but we link as talon_bundle_evocore — rename after extraction.
+        if has_evocore {
+            let src = lib_dir.join(lib_file);
+            let dst = lib_dir.join(if target_os == "windows" {
+                "talon_bundle_evocore.lib"
+            } else {
+                "libtalon_bundle_evocore.a"
+            });
+            if src.exists() && !dst.exists() {
+                fs::rename(&src, &dst)
+                    .unwrap_or_else(|e| panic!("Failed to rename {src:?} → {dst:?}: {e}"));
+                eprintln!("cargo:warning=Renamed {} → {} for evocore feature", src.display(), dst.display());
+            }
+        }
     }
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
+    // 实际的静态库文件名（evocore 模式下已重命名）
+    let actual_lib_file = if target_os == "windows" {
+        format!("{lib_name}.lib")
+    } else {
+        format!("lib{lib_name}.a")
+    };
     // macOS: -force_load 确保静态库中的 #[ctor] 函数不被链接器丢弃
     if target_os == "macos" {
-        let lib_full = format!("{}/{}", lib_dir.display(), lib_file);
+        let lib_full = format!("{}/{}", lib_dir.display(), actual_lib_file);
         println!("cargo:rustc-link-lib=static={lib_name}");
         println!("cargo:rustc-link-arg=-Wl,-force_load,{lib_full}");
     } else if target_os == "linux" {
