@@ -6,7 +6,7 @@
 #
 [package]
 name = "talon-sys"
-version = "0.1.16"
+version = "0.1.17"
 edition = "2021"
 description = "FFI bindings to Talon — AI-native multi-model data engine"
 license = "MIT"
