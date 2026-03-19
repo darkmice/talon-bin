@@ -66,12 +66,15 @@ fn main() {
     let lib_path = lib_dir.join(lib_file);
 
     if !lib_path.exists() {
-        let version = env!("CARGO_PKG_VERSION");
+        // 预编译库版本 — 仅在底层 C 库（talon/talon-ai/talon-evo-core）变更时更新。
+        // talon-sys 的 Rust FFI 绑定代码变更不需要更新此版本。
+        const TALON_LIB_VERSION: &str = "0.1.19";
+
         // evocore feature 启用时下载 libtalon-evocore-*，否则 libtalon-*
         let archive_prefix = if has_evocore { "libtalon-evocore" } else { "libtalon" };
         let archive_name = format!("{archive_prefix}-{target_name}.tar.gz");
         let url = format!(
-            "https://github.com/darkmice/talon-bin/releases/download/v{version}/{archive_name}"
+            "https://github.com/darkmice/talon-bin/releases/download/v{TALON_LIB_VERSION}/{archive_name}"
         );
 
         eprintln!("cargo:warning=Downloading Talon library from {url}");
@@ -86,7 +89,7 @@ fn main() {
 
         if !response.status().is_success() {
             panic!(
-                "Failed to download {url}: HTTP {}. Make sure release v{version} exists.",
+                "Failed to download {url}: HTTP {}. Make sure release v{TALON_LIB_VERSION} exists.",
                 response.status()
             );
         }
