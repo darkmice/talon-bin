@@ -1,0 +1,42 @@
+[package]
+name = "talon-bundle-evocore"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Talon full bundle: core engine + AI extension + EvoCore evolution engine (pre-compiled binary)"
+
+[dependencies]
+# Core engine (public, open source)
+talon = { path = "../../superclaw-db" }
+
+# AI extension (private, closed source, paid module)
+talon-ai = { path = "../../talon-ai" }
+
+# EvoCore evolution engine (private, closed source, paid module)
+talon-evo-core = { path = "../../talon-evo-core" }
+
+# Used to auto-register handlers at program startup
+ctor = "0.2"
+
+serde_json = "1"
+tracing = "0.1"
+
+[lib]
+name = "talon_bundle_evocore"
+path = "src/lib.rs"
+crate-type = ["staticlib", "cdylib"]
+
+# ── 防反编译 Release Profile ──
+[profile.release]
+# 单编译单元 — 最大化跨模块优化，混淆内部调用关系
+codegen-units = 1
+# 完整 LTO — 打平所有 crate 边界，IDA/Ghidra 无法区分原始模块
+lto = "fat"
+# 函数级优化 — panic 路径直接 abort，移除 unwind 表
+panic = "abort"
+# 最大优化 — 内联激进，内部函数不会独立出现
+opt-level = 3
+# 移除所有符号和调试信息
+strip = "symbols"
+# 关闭调试信息
+debug = false

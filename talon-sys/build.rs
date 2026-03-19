@@ -13,24 +13,24 @@ fn main() {
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
 
     // ── 优先使用本地库路径（开发环境）──
-    // 设置 TALON_LIB_DIR 环境变量指向包含 libtalon.a 的目录，跳过下载。
-    // 例如：TALON_LIB_DIR=/path/to/superclaw-db/target/release cargo build
+    // 设置 TALON_LIB_DIR 环境变量指向包含 libtalon.a / libtalon_bundle_evocore.a 的目录。
+    let lib_name = if cfg!(feature = "evocore") { "talon_bundle_evocore" } else { "talon" };
+
     if let Ok(local_dir) = env::var("TALON_LIB_DIR") {
         let path = PathBuf::from(&local_dir);
         if path.exists() {
-            eprintln!("cargo:warning=Using local Talon library from {local_dir}");
+            eprintln!("cargo:warning=Using local Talon library ({lib_name}) from {local_dir}");
             println!("cargo:rustc-link-search=native={local_dir}");
-            // macOS: -force_load 确保 ctor 注册函数不被链接器丢弃
             if target_os == "macos" {
-                let lib_full = format!("{local_dir}/libtalon.a");
-                println!("cargo:rustc-link-lib=static=talon");
+                let lib_full = format!("{local_dir}/lib{lib_name}.a");
+                println!("cargo:rustc-link-lib=static={lib_name}");
                 println!("cargo:rustc-link-arg=-Wl,-force_load,{lib_full}");
             } else if target_os == "linux" {
                 println!("cargo:rustc-link-arg=-Wl,--whole-archive");
-                println!("cargo:rustc-link-lib=static=talon");
+                println!("cargo:rustc-link-lib=static={lib_name}");
                 println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
             } else {
-                println!("cargo:rustc-link-lib=static=talon");
+                println!("cargo:rustc-link-lib=static={lib_name}");
             }
             link_system_libs();
             println!("cargo:rerun-if-changed=build.rs");
@@ -66,7 +66,9 @@ fn main() {
 
     if !lib_path.exists() {
         let version = env!("CARGO_PKG_VERSION");
-        let archive_name = format!("libtalon-{target_name}.tar.gz");
+        // evocore feature 启用时下载 libtalon-evocore-*，否则 libtalon-*
+        let archive_prefix = if cfg!(feature = "evocore") { "libtalon-evocore" } else { "libtalon" };
+        let archive_name = format!("{archive_prefix}-{target_name}.tar.gz");
         let url = format!(
             "https://github.com/darkmice/talon-bin/releases/download/v{version}/{archive_name}"
         );
@@ -98,18 +100,17 @@ fn main() {
     }
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
-    // macOS: -force_load 确保静态库中的 #[ctor] 函数（AI handler 注册）不被链接器丢弃
+    // macOS: -force_load 确保静态库中的 #[ctor] 函数不被链接器丢弃
     if target_os == "macos" {
-        let lib_full = format!("{}/libtalon.a", lib_dir.display());
-        // 保留 -ltalon 提供符号，同时 -force_load 防止 ctor 被丢弃（两者都需要）
-        println!("cargo:rustc-link-lib=static=talon");
+        let lib_full = format!("{}/{}", lib_dir.display(), lib_file);
+        println!("cargo:rustc-link-lib=static={lib_name}");
         println!("cargo:rustc-link-arg=-Wl,-force_load,{lib_full}");
     } else if target_os == "linux" {
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
-        println!("cargo:rustc-link-lib=static=talon");
+        println!("cargo:rustc-link-lib=static={lib_name}");
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
     } else {
-        println!("cargo:rustc-link-lib=static=talon");
+        println!("cargo:rustc-link-lib=static={lib_name}");
     }
     link_system_libs();
     println!("cargo:rerun-if-changed=build.rs");

@@ -1843,3 +1843,14 @@ fn decode_value(data: &[u8], pos: usize) -> Result<(Value, usize), TalonError> {
         _ => Err(TalonError(format!("unknown binary type tag: {tag}"))),
     }
 }
+
+// ── EvoCore 封装（条件编译）──────────────────────────────────────────────────
+//
+// 启用 `evocore` feature 后，通过 `module:"evo"` 命令访问 EvoCore 进化引擎。
+// 预编译库需使用 libtalon-evocore.a（包含 talon + talon-ai + evo-core）。
+
+#[cfg(feature = "evocore")]
+mod evocore;
+
+#[cfg(feature = "evocore")]
+pub use evocore::*;
