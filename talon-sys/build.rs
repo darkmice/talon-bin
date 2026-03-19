@@ -14,7 +14,8 @@ fn main() {
 
     // ── 优先使用本地库路径（开发环境）──
     // 设置 TALON_LIB_DIR 环境变量指向包含 libtalon.a / libtalon_bundle_evocore.a 的目录。
-    let lib_name = if cfg!(feature = "evocore") { "talon_bundle_evocore" } else { "talon" };
+    let has_evocore = env::var("CARGO_FEATURE_EVOCORE").is_ok();
+    let lib_name = if has_evocore { "talon_bundle_evocore" } else { "talon" };
 
     if let Ok(local_dir) = env::var("TALON_LIB_DIR") {
         let path = PathBuf::from(&local_dir);
@@ -67,7 +68,7 @@ fn main() {
     if !lib_path.exists() {
         let version = env!("CARGO_PKG_VERSION");
         // evocore feature 启用时下载 libtalon-evocore-*，否则 libtalon-*
-        let archive_prefix = if cfg!(feature = "evocore") { "libtalon-evocore" } else { "libtalon" };
+        let archive_prefix = if has_evocore { "libtalon-evocore" } else { "libtalon" };
         let archive_name = format!("{archive_prefix}-{target_name}.tar.gz");
         let url = format!(
             "https://github.com/darkmice/talon-bin/releases/download/v{version}/{archive_name}"
