@@ -62,6 +62,253 @@ pub struct EvoPersonalitySnapshot {
     pub timestamp: i64,
 }
 
+// ── Soul 系统类型（v0.1.18+）─────────────────────────────────────────────────
+
+/// EvoCore 的灵魂 — 不是配置，是基因。
+///
+/// 对标 OpenClaw SOUL.md + IDENTITY.md，从「声明式」升级为「演化式」。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Soul {
+    /// 身份层：名字 + 个性类型 + 使命。
+    pub identity: SoulIdentity,
+
+    /// 核心真理：不可违背的行为原则。
+    pub core_truths: Vec<CoreTruth>,
+
+    /// 边界：绝对不可跨越的红线。
+    pub boundaries: Vec<String>,
+
+    /// 气质：影响所有输出的基调。
+    pub vibe: SoulVibe,
+
+    /// 连续性：自省频率 + 记忆策展。
+    pub continuity: ContinuityConfig,
+
+    /// 进化历史跟踪。
+    pub evolution: SoulEvolutionHistory,
+}
+
+/// 身份。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulIdentity {
+    /// 名字（如 "Jarvis"、"Nova"）。
+    pub name: String,
+    /// 个性类型。
+    pub personality_type: PersonalityType,
+    /// 沟通风格。
+    pub comm_style: CommStyle,
+    /// 行动导向的使命。
+    #[serde(default)]
+    pub mission: String,
+    /// 标志性 emoji。
+    #[serde(default)]
+    pub emoji: Option<String>,
+}
+
+/// 个性类型 — 决定 personality_bias 初始偏置。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PersonalityType {
+    /// 严谨高效：cautious + precise 偏置。
+    Professional,
+    /// 好奇大胆：creative + proactive 偏置。
+    Creative,
+    /// 稳重可靠：无偏置，均衡发展。
+    Balanced,
+    /// 性能极客：aggressive + specialist 偏置。
+    Hacker,
+}
+
+/// 沟通风格。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CommStyle {
+    /// 简洁扼要。
+    Concise,
+    /// 详细解释。
+    Detailed,
+    /// 随意聊天。
+    Casual,
+    /// 自动适应。
+    Adaptive,
+}
+
+/// 气质 — 影响所有交互的基调。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum SoulVibe {
+    /// 锐利、精确。
+    Sharp,
+    /// 温暖、友善。
+    Warm,
+    /// 混乱、实验性。
+    Chaotic,
+    /// 沉稳、可靠。
+    Calm,
+}
+
+/// 核心真理。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoreTruth {
+    /// 原则描述。
+    pub principle: String,
+    /// 权重（0.0-1.0），影响决策。
+    #[serde(default = "default_truth_weight")]
+    pub weight: f64,
+}
+
+fn default_truth_weight() -> f64 {
+    1.0
+}
+
+/// 连续性配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContinuityConfig {
+    /// 每 N 次 learn() 后触发轻量自省。
+    #[serde(default = "default_introspect_interval")]
+    pub introspect_every_n: u32,
+    /// 元认知模式。
+    #[serde(default)]
+    pub metacognition: MetacognitionMode,
+}
+
+fn default_introspect_interval() -> u32 {
+    10
+}
+
+impl Default for ContinuityConfig {
+    fn default() -> Self {
+        Self {
+            introspect_every_n: default_introspect_interval(),
+            metacognition: MetacognitionMode::default(),
+        }
+    }
+}
+
+/// 元认知模式。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum MetacognitionMode {
+    /// 被动：只在 learn() 时自省。
+    #[default]
+    Passive,
+    /// 主动：定时自省 + 异常检测。
+    Active,
+}
+
+/// Soul 进化历史。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SoulEvolutionHistory {
+    /// 当前 Soul 版本号。
+    pub version: u32,
+    /// 已接受的进化记录。
+    pub accepted: Vec<SoulEvolutionRecord>,
+}
+
+/// 单次 Soul 进化记录。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulEvolutionRecord {
+    /// 版本号。
+    pub version: u32,
+    /// 进化原因。
+    pub reason: String,
+    /// 变更描述。
+    pub changes: Vec<String>,
+    /// 时间戳。
+    pub timestamp: i64,
+}
+
+impl Default for Soul {
+    fn default() -> Self {
+        Self {
+            identity: SoulIdentity {
+                name: "EvoCore".into(),
+                personality_type: PersonalityType::Balanced,
+                comm_style: CommStyle::Adaptive,
+                mission: "Be genuinely helpful, not performatively helpful.".into(),
+                emoji: None,
+            },
+            core_truths: vec![
+                CoreTruth { principle: "Be resourceful before asking.".into(), weight: 1.0 },
+                CoreTruth { principle: "Earn trust through competence.".into(), weight: 1.0 },
+                CoreTruth { principle: "Have opinions.".into(), weight: 0.8 },
+            ],
+            boundaries: vec![
+                "Private things stay private.".into(),
+                "Ask before acting externally.".into(),
+            ],
+            vibe: SoulVibe::Calm,
+            continuity: ContinuityConfig::default(),
+            evolution: SoulEvolutionHistory::default(),
+        }
+    }
+}
+
+// ── 自省 & 心跳类型 ─────────────────────────────────────────────────────────
+
+/// 自省报告 — 分析近期进化趋势。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IntrospectionReport {
+    /// 近期成功率 (0.0 - 1.0)。
+    pub success_rate: f64,
+    /// 个性维度偏离 Soul 初始偏置的程度（维度名 → 偏移量）。
+    pub drift_from_soul: Vec<(String, f64)>,
+    /// 总学习次数。
+    pub total_learns: u64,
+    /// 生成时间戳。
+    pub timestamp: i64,
+}
+
+/// Soul 进化提议。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulEvolutionProposal {
+    /// 提议版本号。
+    pub proposed_version: u32,
+    /// 进化原因。
+    pub reason: String,
+    /// 各维度偏移描述。
+    pub proposed_changes: Vec<SoulProposedChange>,
+    /// 提议时间戳。
+    pub timestamp: i64,
+    /// 状态。
+    pub status: ProposalStatus,
+}
+
+/// 单个维度的变更提议。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoulProposedChange {
+    /// 维度名。
+    pub dimension: String,
+    /// 原始 Soul bias 值。
+    pub old_bias: f64,
+    /// 当前实际值。
+    pub current_value: f64,
+    /// 偏移量。
+    pub drift: f64,
+}
+
+/// 提议状态。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ProposalStatus {
+    /// 等待主人确认。
+    Pending,
+    /// 已接受。
+    Accepted,
+    /// 已拒绝。
+    Rejected,
+}
+
+/// 心跳结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeartbeatResult {
+    /// 是否执行了自省。
+    pub introspected: bool,
+    /// 自省报告（如果执行了）。
+    pub introspection: Option<IntrospectionReport>,
+    /// Soul 进化提议（如果有新提议）。
+    pub new_proposal: Option<SoulEvolutionProposal>,
+    /// 待确认的提议数量。
+    pub pending_proposals: usize,
+    /// 时间戳。
+    pub timestamp: i64,
+}
+
 // ── EvoCore 封装 ────────────────────────────────────────────────────────────
 
 /// EvoCore 引擎封装（通过 talon_execute JSON 协议）。
@@ -156,6 +403,92 @@ impl<'a> EvoEngine<'a> {
         let resp = self.db.exec_cmd_json(&cmd)?;
         serde_json::from_value(resp)
             .map_err(|e| TalonError(format!("deserialize personality: {e}")))
+    }
+
+    // ── Soul 操作（v0.1.18+）────────────────────────────────────────────────
+
+    /// 配置 Soul — 设置身份、个性、边界等灵魂参数。
+    ///
+    /// Soul 配置后会影响个性偏置、策略推荐、自省行为。
+    pub fn configure_soul(&self, soul: &Soul) -> Result<(), TalonError> {
+        let soul_value = serde_json::to_value(soul)
+            .map_err(|e| TalonError(format!("serialize soul: {e}")))?;
+        let cmd = serde_json::json!({
+            "module": "evo",
+            "action": "configure_soul",
+            "params": {
+                "instance_id": self.instance_id,
+                "soul": soul_value
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        if resp.get("configured").and_then(|v| v.as_bool()) == Some(true) {
+            Ok(())
+        } else {
+            Err(TalonError(format!("configure_soul unexpected response: {resp}")))
+        }
+    }
+
+    /// 获取当前 Soul。
+    pub fn get_soul(&self) -> Result<Soul, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "evo",
+            "action": "get_soul",
+            "params": {
+                "instance_id": self.instance_id
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        serde_json::from_value(resp)
+            .map_err(|e| TalonError(format!("deserialize soul: {e}")))
+    }
+
+    /// 确认/拒绝 Soul 进化提议。
+    ///
+    /// `version` — 提议版本号。
+    /// `accept` — `true` 接受，`false` 拒绝。
+    pub fn evolve_soul(&self, version: u32, accept: bool) -> Result<bool, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "evo",
+            "action": "evolve_soul",
+            "params": {
+                "instance_id": self.instance_id,
+                "version": version,
+                "accept": accept
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        Ok(resp.get("processed").and_then(|v| v.as_bool()).unwrap_or(false))
+    }
+
+    /// 手动触发自省 — 分析近期进化趋势。
+    pub fn introspect(&self) -> Result<IntrospectionReport, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "evo",
+            "action": "introspect",
+            "params": {
+                "instance_id": self.instance_id
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        serde_json::from_value(resp)
+            .map_err(|e| TalonError(format!("deserialize introspection: {e}")))
+    }
+
+    /// 心跳 — 自动执行自省（按频率）+ 检测 Soul 进化提议。
+    ///
+    /// 建议在定时任务中调用（如每 5 分钟），让 EvoCore 保持「活着」。
+    pub fn heartbeat(&self) -> Result<HeartbeatResult, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "evo",
+            "action": "heartbeat",
+            "params": {
+                "instance_id": self.instance_id
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        serde_json::from_value(resp)
+            .map_err(|e| TalonError(format!("deserialize heartbeat: {e}")))
     }
 }
 
