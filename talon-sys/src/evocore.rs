@@ -353,7 +353,12 @@ impl<'a> EvoEngine<'a> {
         let id = resp
             .get("id")
             .and_then(|v| v.as_u64())
-            .ok_or_else(|| TalonError("evo open: missing instance id".into()))?;
+            .ok_or_else(|| {
+                TalonError(format!(
+                    "evo open: missing instance id (response: {})",
+                    serde_json::to_string(&resp).unwrap_or_default()
+                ))
+            })?;
         Ok(Self { db, instance_id: id })
     }
 
