@@ -1591,7 +1591,7 @@ impl Talon {
     }
 
     /// 执行 JSON 命令，返回解析后的响应。
-    fn exec_cmd_json(&self, cmd: &serde_json::Value) -> Result<serde_json::Value, TalonError> {
+    pub fn exec_cmd_json(&self, cmd: &serde_json::Value) -> Result<serde_json::Value, TalonError> {
         let cmd_str = cmd.to_string();
         let c_cmd = CString::new(cmd_str)?;
         let mut out: *mut std::os::raw::c_char = ptr::null_mut();
