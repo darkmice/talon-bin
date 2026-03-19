@@ -71,12 +71,36 @@ pub struct EvoEngine<'a> {
 }
 
 impl<'a> EvoEngine<'a> {
-    /// 创建 EvoCore 实例。
+    /// 使用默认配置创建 EvoCore 实例。
     pub fn open(db: &'a Talon) -> Result<Self, TalonError> {
+        Self::open_with_config(db, None)
+    }
+
+    /// 使用自定义配置创建 EvoCore 实例。
+    ///
+    /// `config` 为 `None` 时使用 EvoCore 默认配置。
+    /// 传入 `serde_json::Value` 可灵活配置各项参数。
+    ///
+    /// ```rust,no_run
+    /// use talon::{Talon, TalonEvoExt};
+    /// let db = Talon::open("./data").unwrap();
+    /// let config = serde_json::json!({
+    ///     "memory": { "fts_weight": 0.4, "vec_weight": 0.6 }
+    /// });
+    /// // let evo = EvoEngine::open_with_config(&db, Some(config)).unwrap();
+    /// ```
+    pub fn open_with_config(
+        db: &'a Talon,
+        config: Option<serde_json::Value>,
+    ) -> Result<Self, TalonError> {
+        let mut cmd_params = serde_json::json!({});
+        if let Some(cfg) = config {
+            cmd_params["config"] = cfg;
+        }
         let cmd = serde_json::json!({
             "module": "evo",
             "action": "open",
-            "params": {}
+            "params": cmd_params
         });
         let resp = db.exec_cmd_json(&cmd)?;
         let id = resp
@@ -150,12 +174,19 @@ impl<'a> Drop for EvoEngine<'a> {
 
 /// 扩展 trait：为 Talon 添加 EvoCore 能力。
 pub trait TalonEvoExt {
-    /// 打开 EvoCore 进化引擎。
+    /// 使用默认配置打开 EvoCore 进化引擎。
     fn evo(&self) -> Result<EvoEngine<'_>, TalonError>;
+
+    /// 使用自定义配置打开 EvoCore 进化引擎。
+    fn evo_with_config(&self, config: serde_json::Value) -> Result<EvoEngine<'_>, TalonError>;
 }
 
 impl TalonEvoExt for Talon {
     fn evo(&self) -> Result<EvoEngine<'_>, TalonError> {
         EvoEngine::open(self)
+    }
+
+    fn evo_with_config(&self, config: serde_json::Value) -> Result<EvoEngine<'_>, TalonError> {
+        EvoEngine::open_with_config(self, Some(config))
     }
 }
