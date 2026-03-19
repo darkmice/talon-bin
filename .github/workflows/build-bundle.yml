@@ -21,7 +21,7 @@ on:
       release_tag:
         description: 'Release tag name (e.g. v0.1.17)'
         required: true
-        default: 'v0.1.17'
+        default: 'v0.1.18'
 
 env:
   # Unify tag source: tag push uses GITHUB_REF, manual uses input
