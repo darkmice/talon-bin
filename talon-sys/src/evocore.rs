@@ -317,6 +317,30 @@ pub struct EvoEngine<'a> {
     instance_id: u64,
 }
 
+/// 解包 EvoCore FFI 响应。
+///
+/// ffi_dispatch 返回格式：
+/// - 成功: `{"ok": true, "data": {实际数据}}`
+/// - 失败: `{"ok": false, "error": "错误信息"}`
+///
+/// 此函数检查 ok 字段，提取 data 层并返回。
+fn unwrap_evo_response(resp: serde_json::Value) -> Result<serde_json::Value, TalonError> {
+    // 检查错误响应
+    if resp.get("ok").and_then(|v| v.as_bool()) == Some(false) {
+        let msg = resp.get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown evo error");
+        return Err(TalonError(format!("evo: {msg}")));
+    }
+    // 提取 data 层（如果存在）
+    if let Some(data) = resp.get("data") {
+        Ok(data.clone())
+    } else {
+        // 兼容直接返回格式（无 ok/data 包装）
+        Ok(resp)
+    }
+}
+
 impl<'a> EvoEngine<'a> {
     /// 使用默认配置创建 EvoCore 实例。
     pub fn open(db: &'a Talon) -> Result<Self, TalonError> {
@@ -350,13 +374,14 @@ impl<'a> EvoEngine<'a> {
             "params": cmd_params
         });
         let resp = db.exec_cmd_json(&cmd)?;
-        let id = resp
+        let data = unwrap_evo_response(resp)?;
+        let id = data
             .get("id")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| {
                 TalonError(format!(
-                    "evo open: missing instance id (response: {})",
-                    serde_json::to_string(&resp).unwrap_or_default()
+                    "evo open: missing instance id (data: {})",
+                    serde_json::to_string(&data).unwrap_or_default()
                 ))
             })?;
         Ok(Self { db, instance_id: id })
@@ -374,7 +399,8 @@ impl<'a> EvoEngine<'a> {
             }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        serde_json::from_value(resp)
+        let data = unwrap_evo_response(resp)?;
+        serde_json::from_value(data)
             .map_err(|e| TalonError(format!("deserialize learn result: {e}")))
     }
 
@@ -392,7 +418,8 @@ impl<'a> EvoEngine<'a> {
             }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        serde_json::from_value(resp)
+        let data = unwrap_evo_response(resp)?;
+        serde_json::from_value(data)
             .map_err(|e| TalonError(format!("deserialize strategy: {e}")))
     }
 
@@ -406,7 +433,8 @@ impl<'a> EvoEngine<'a> {
             }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        serde_json::from_value(resp)
+        let data = unwrap_evo_response(resp)?;
+        serde_json::from_value(data)
             .map_err(|e| TalonError(format!("deserialize personality: {e}")))
     }
 
@@ -427,10 +455,11 @@ impl<'a> EvoEngine<'a> {
             }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        if resp.get("configured").and_then(|v| v.as_bool()) == Some(true) {
+        let data = unwrap_evo_response(resp)?;
+        if data.get("configured").and_then(|v| v.as_bool()) == Some(true) {
             Ok(())
         } else {
-            Err(TalonError(format!("configure_soul unexpected response: {resp}")))
+            Err(TalonError(format!("configure_soul unexpected response: {data}")))
         }
     }
 
@@ -444,7 +473,8 @@ impl<'a> EvoEngine<'a> {
             }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        serde_json::from_value(resp)
+        let data = unwrap_evo_response(resp)?;
+        serde_json::from_value(data)
             .map_err(|e| TalonError(format!("deserialize soul: {e}")))
     }
 
@@ -463,7 +493,8 @@ impl<'a> EvoEngine<'a> {
             }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        Ok(resp.get("processed").and_then(|v| v.as_bool()).unwrap_or(false))
+        let data = unwrap_evo_response(resp)?;
+        Ok(data.get("processed").and_then(|v| v.as_bool()).unwrap_or(false))
     }
 
     /// 手动触发自省 — 分析近期进化趋势。
@@ -476,7 +507,8 @@ impl<'a> EvoEngine<'a> {
             }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        serde_json::from_value(resp)
+        let data = unwrap_evo_response(resp)?;
+        serde_json::from_value(data)
             .map_err(|e| TalonError(format!("deserialize introspection: {e}")))
     }
 
@@ -492,7 +524,8 @@ impl<'a> EvoEngine<'a> {
             }
         });
         let resp = self.db.exec_cmd_json(&cmd)?;
-        serde_json::from_value(resp)
+        let data = unwrap_evo_response(resp)?;
+        serde_json::from_value(data)
             .map_err(|e| TalonError(format!("deserialize heartbeat: {e}")))
     }
 }
