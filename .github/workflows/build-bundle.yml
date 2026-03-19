@@ -1,4 +1,4 @@
-name: Build Talon Bundle (Core + AI)
+name: Build Talon Bundle (Core + AI + EvoCore)
 
 on:
   push:
@@ -14,16 +14,21 @@ on:
         description: 'Talon AI git ref (tag/branch/sha)'
         required: true
         default: 'main'
-      release_tag:
-        description: 'Release tag name (e.g. v0.1.1)'
+      talon_evocore_ref:
+        description: 'Talon EvoCore git ref (tag/branch/sha)'
         required: true
-        default: 'v0.1.1'
+        default: 'main'
+      release_tag:
+        description: 'Release tag name (e.g. v0.1.17)'
+        required: true
+        default: 'v0.1.17'
 
 env:
   # Unify tag source: tag push uses GITHUB_REF, manual uses input
   RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
   CORE_REF: ${{ inputs.talon_core_ref || 'main' }}
   AI_REF: ${{ inputs.talon_ai_ref || 'main' }}
+  EVOCORE_REF: ${{ inputs.talon_evocore_ref || 'main' }}
 
 permissions:
   contents: write
@@ -92,11 +97,11 @@ jobs:
         shell: bash
         run: |
           if [ -z "${{ secrets.TALON_AI_TOKEN }}" ]; then
-            echo "::error::TALON_AI_TOKEN secret is not configured. Cannot checkout private talon-ai repo."
+            echo "::error::TALON_AI_TOKEN secret is not configured. Cannot checkout private repos."
             exit 1
           fi
 
-      # 1. Checkout talon-bin (this repo, contains talon-bundle and talon-sys)
+      # 1. Checkout talon-bin (this repo, contains talon-bundle, talon-bundle-evocore, talon-sys)
       - name: Checkout talon-bin
         uses: actions/checkout@v4
         with:
@@ -119,13 +124,22 @@ jobs:
           token: ${{ secrets.TALON_AI_TOKEN }}
           path: talon-ai
 
-      # 4. Install Rust
+      # 4. Checkout talon-evo-core (private, closed source) — 需要 PAT
+      - name: Checkout Talon EvoCore (private)
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-evocore
+          ref: ${{ env.EVOCORE_REF }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-evo-core
+
+      # 5. Install Rust
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      # 5. Install cross-compilation tools
+      # 6. Install cross-compilation tools
       - name: Install cross-compilation tools (apt)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -136,8 +150,9 @@ jobs:
         if: matrix.use_cross == true
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      # 6. Build talon-bundle (core + AI)
-      - name: Build (cargo)
+      # ─── Build talon-bundle (core + AI) ─────────────────────────────────
+
+      - name: Build talon-bundle (cargo)
         if: matrix.use_cross != true
         working-directory: talon-bin/talon-bundle
         run: cargo build --release --target ${{ matrix.target }}
@@ -145,15 +160,34 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           MACOSX_DEPLOYMENT_TARGET: "11.0"
 
-      - name: Build (cross)
+      - name: Build talon-bundle (cross)
         if: matrix.use_cross == true
         working-directory: talon-bin/talon-bundle
         run: cross build --release --target ${{ matrix.target }}
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
 
-      # 7. Package library
-      - name: Package library (Unix)
+      # ─── Build talon-bundle-evocore (core + AI + EvoCore) ───────────────
+
+      - name: Build talon-bundle-evocore (cargo)
+        if: matrix.use_cross != true
+        working-directory: talon-bin/talon-bundle-evocore
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+      - name: Build talon-bundle-evocore (cross)
+        if: matrix.use_cross == true
+        working-directory: talon-bin/talon-bundle-evocore
+        run: cross build --release --target ${{ matrix.target }}
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+      # ─── Package libraries ─────────────────────────────────────────────
+
+      # 7a. Package talon-bundle (libtalon.*)
+      - name: Package talon-bundle (Unix)
         if: runner.os != 'Windows'
         working-directory: talon-bin
         run: |
@@ -164,24 +198,52 @@ jobs:
           cp ../superclaw-db/include/talon.h dist-lib/ 2>/dev/null || true
           cd dist-lib && tar czf libtalon-${{ matrix.name }}.tar.gz * && cd ..
 
-      - name: Package library (Windows)
+      - name: Package talon-bundle (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         working-directory: talon-bin
         run: |
           New-Item -ItemType Directory -Force -Path dist-lib
-          # Rename talon_bundle → talon for distribution
           Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon_bundle.lib dist-lib/talon.lib -ErrorAction SilentlyContinue
           Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon_bundle.dll dist-lib/talon.dll -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/include/talon.h dist-lib/ -ErrorAction SilentlyContinue
           cd dist-lib; tar czf libtalon-${{ matrix.name }}.tar.gz *; cd ..
 
+      # 7b. Package talon-bundle-evocore (libtalon-evocore.*)
+      - name: Package talon-bundle-evocore (Unix)
+        if: runner.os != 'Windows'
+        working-directory: talon-bin
+        run: |
+          mkdir -p dist-evocore
+          # Copy and rename: talon_bundle_evocore → talon (same C ABI, superset of talon-bundle)
+          cp talon-bundle-evocore/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle_evocore.${{ matrix.lib_ext }} dist-evocore/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} 2>/dev/null || true
+          cp talon-bundle-evocore/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle_evocore.${{ matrix.dylib_ext }} dist-evocore/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} 2>/dev/null || true
+          cp ../superclaw-db/include/talon.h dist-evocore/ 2>/dev/null || true
+          cd dist-evocore && tar czf libtalon-evocore-${{ matrix.name }}.tar.gz * && cd ..
+
+      - name: Package talon-bundle-evocore (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: talon-bin
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-evocore
+          Copy-Item talon-bundle-evocore/target/${{ matrix.target }}/release/talon_bundle_evocore.lib dist-evocore/talon.lib -ErrorAction SilentlyContinue
+          Copy-Item talon-bundle-evocore/target/${{ matrix.target }}/release/talon_bundle_evocore.dll dist-evocore/talon.dll -ErrorAction SilentlyContinue
+          Copy-Item ../superclaw-db/include/talon.h dist-evocore/ -ErrorAction SilentlyContinue
+          cd dist-evocore; tar czf libtalon-evocore-${{ matrix.name }}.tar.gz *; cd ..
+
       # 8. Upload artifacts
-      - name: Upload library artifacts
+      - name: Upload talon-bundle artifacts
         uses: actions/upload-artifact@v4
         with:
           name: libtalon-${{ matrix.name }}
           path: talon-bin/dist-lib/libtalon-${{ matrix.name }}.tar.gz
+
+      - name: Upload talon-bundle-evocore artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtalon-evocore-${{ matrix.name }}
+          path: talon-bin/dist-evocore/libtalon-evocore-${{ matrix.name }}.tar.gz
 
   release:
     needs: build
@@ -197,6 +259,7 @@ jobs:
         run: |
           mkdir -p release
           find artifacts -name '*.tar.gz' -exec cp {} release/ \;
+          echo "=== Release files ==="
           ls -la release/
 
       - name: Generate checksums
@@ -209,38 +272,49 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "Talon ${{ env.RELEASE_TAG }} (with AI)"
+          name: "Talon ${{ env.RELEASE_TAG }} (Core + AI + EvoCore)"
           body: |
             ## Talon ${{ env.RELEASE_TAG }}
 
-            AI-native multi-model data engine: SQL + KV + TimeSeries + MQ + Vector + Graph + Geo + FTS + **AI Engine**.
+            AI-native multi-model data engine: SQL + KV + TimeSeries + MQ + Vector + Graph + Geo + FTS + **AI Engine** + **EvoCore**.
 
-            This release bundles the paid AI extension (Session/Context/Memory/RAG/Agent/Intent/Trace).
-            AI features require a valid license. Core features work without a license.
+            ### Three-tier library architecture (matryoshka)
 
-            ### Libraries (for embedding via FFI / Rust)
+            ```
+            libtalon-evocore.a  ⊃  libtalon.a (with AI)
+                 (最全)                (基础+AI)
+            ```
 
-            | Platform | Architecture | File |
-            |----------|-------------|------|
-            | Linux | x86_64 | `libtalon-talon-linux-amd64.tar.gz` |
-            | Linux | aarch64 | `libtalon-talon-linux-arm64.tar.gz` |
-            | macOS | x86_64 | `libtalon-talon-macos-amd64.tar.gz` |
-            | macOS | aarch64 (Apple Silicon) | `libtalon-talon-macos-arm64.tar.gz` |
-            | Windows | x86_64 | `libtalon-talon-windows-amd64.tar.gz` |
-            | Windows | aarch64 (ARM) | `libtalon-talon-windows-arm64.tar.gz` |
-            | Linux | loongarch64 (龙芯) | `libtalon-talon-linux-loongarch64.tar.gz` |
-            | Linux | riscv64 | `libtalon-talon-linux-riscv64.tar.gz` |
+            | Library | Contains | Use case |
+            |---------|----------|----------|
+            | `libtalon-*.tar.gz` | Core + AI Engine | Standard usage |
+            | `libtalon-evocore-*.tar.gz` | Core + AI + EvoCore | Self-evolution capabilities |
+
+            ### Platform support
+
+            | Platform | Architecture | Core+AI | Core+AI+EvoCore |
+            |----------|-------------|---------|-----------------|
+            | Linux | x86_64 | ✅ | ✅ |
+            | Linux | aarch64 | ✅ | ✅ |
+            | macOS | x86_64 | ✅ | ✅ |
+            | macOS | aarch64 (Apple Silicon) | ✅ | ✅ |
+            | Windows | x86_64 | ✅ | ✅ |
+            | Windows | aarch64 (ARM) | ✅ | ✅ |
+            | Linux | loongarch64 (龙芯) | ✅ | ✅ |
+            | Linux | riscv64 | ✅ | ✅ |
 
             ### Rust usage
+
+            **Core + AI (default):**
             ```toml
             [dependencies]
             talon = { git = "https://github.com/darkmice/talon-bin.git", tag = "${{ env.RELEASE_TAG }}", package = "talon-sys" }
             ```
 
-            ### License activation
-            ```rust
-            // Set license key before using AI features
-            std::env::set_var("TALON_AI_LICENSE_KEY", "your-license-key");
+            **Core + AI + EvoCore:**
+            ```toml
+            [dependencies]
+            talon = { git = "https://github.com/darkmice/talon-bin.git", tag = "${{ env.RELEASE_TAG }}", package = "talon-sys", features = ["evocore"] }
             ```
 
             ### Verify checksums
@@ -277,7 +351,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "chore: update to ${{ env.RELEASE_TAG }} (with AI)"
+            git commit -m "chore: update to ${{ env.RELEASE_TAG }} (Core + AI + EvoCore)"
             git push
           fi
           git tag "${{ env.RELEASE_TAG }}" || true
