@@ -309,6 +309,39 @@ pub struct HeartbeatResult {
     pub timestamp: i64,
 }
 
+// ── 认知模块类型（v0.1.22+）─────────────────────────────────────────────────
+
+/// 轮询意图结果。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PollIntentsResult {
+    /// 本次轮询获取的意图列表。
+    ///
+    /// 每个意图是一个 JSON 对象，带 `type` 字段标识类型：
+    /// - `"Explore"` — 好奇心探索请求
+    /// - `"Verify"` — 假设验证请求
+    /// - `"EpiphanyDiscovered"` — 顿悟通知
+    /// - `"SoulAmendmentProposal"` — 灵魂修正提案
+    /// - `"IntrospectionBroadcast"` — 自省广播
+    pub intents: Vec<serde_json::Value>,
+    /// 本次拉取的数量。
+    pub count: usize,
+}
+
+/// 认知状态快照。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CognitiveStateSnapshot {
+    /// 当前意识状态：`"Awake"` / `"Drowsy"` / `"Dreaming"`。
+    pub consciousness: String,
+    /// 总感官输入次数。
+    pub total_inputs: u64,
+    /// 距离上次感官输入的毫秒数。
+    pub last_input_ms_ago: u64,
+    /// 累计学习次数。
+    pub learn_count: u64,
+    /// 已知领域数量。
+    pub domain_count: u32,
+}
+
 // ── EvoCore 封装 ────────────────────────────────────────────────────────────
 
 /// EvoCore 引擎封装（通过 talon_execute JSON 协议）。
@@ -527,6 +560,125 @@ impl<'a> EvoEngine<'a> {
         let data = unwrap_evo_response(resp)?;
         serde_json::from_value(data)
             .map_err(|e| TalonError(format!("deserialize heartbeat: {e}")))
+    }
+
+    // ── 认知模块操作（v0.1.22+）───────────────────────────────────────────
+
+    /// 非阻塞轮询意图 — 获取大脑产生的自发想法。
+    ///
+    /// 好奇心探索、假设验证、顿悟通知、灵魂修正提案等。
+    ///
+    /// ```rust,no_run
+    /// // 在 Agent 主循环中轮询
+    /// let intents = evo.poll_intents(10).unwrap();
+    /// for intent in &intents.intents {
+    ///     match intent.get("type").and_then(|v| v.as_str()) {
+    ///         Some("Explore") => { /* 执行探索任务 */ }
+    ///         Some("EpiphanyDiscovered") => { /* 记录顿悟 */ }
+    ///         _ => {}
+    ///     }
+    /// }
+    /// ```
+    pub fn poll_intents(&self, max_count: usize) -> Result<PollIntentsResult, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "evo",
+            "action": "poll_intents",
+            "params": {
+                "instance_id": self.instance_id,
+                "max_count": max_count
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let data = unwrap_evo_response(resp)?;
+        serde_json::from_value(data)
+            .map_err(|e| TalonError(format!("deserialize poll_intents: {e}")))
+    }
+
+    /// 投喂观察数据 — 向大脑输入自由形式的感知信息。
+    ///
+    /// ```rust,no_run
+    /// evo.feed_observation("coding", "User prefers Rust over Python", None).unwrap();
+    /// ```
+    pub fn feed_observation(
+        &self,
+        domain: &str,
+        content: &str,
+        metadata: Option<BTreeMap<String, String>>,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "evo",
+            "action": "feed_sensory",
+            "params": {
+                "instance_id": self.instance_id,
+                "input": {
+                    "type": "observation",
+                    "domain": domain,
+                    "content": content,
+                    "metadata": metadata.unwrap_or_default()
+                }
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let data = unwrap_evo_response(resp)?;
+        if data.get("fed").and_then(|v| v.as_bool()) == Some(true) {
+            Ok(())
+        } else {
+            Err(TalonError(format!("feed_sensory unexpected: {data}")))
+        }
+    }
+
+    /// 回传探索结果 — 响应 Explore/Verify 意图。
+    ///
+    /// 将 Agent 执行探索后的发现反馈给大脑，完成好奇心闭环。
+    ///
+    /// ```rust,no_run
+    /// evo.feed_exploration_result(
+    ///     "explore-abc123",
+    ///     "Rust memory safety eliminates null pointer risks",
+    ///     Some(true),
+    /// ).unwrap();
+    /// ```
+    pub fn feed_exploration_result(
+        &self,
+        intent_id: &str,
+        findings: &str,
+        hypothesis_confirmed: Option<bool>,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "evo",
+            "action": "feed_sensory",
+            "params": {
+                "instance_id": self.instance_id,
+                "input": {
+                    "type": "exploration_result",
+                    "intent_id": intent_id,
+                    "findings": findings,
+                    "hypothesis_confirmed": hypothesis_confirmed
+                }
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let data = unwrap_evo_response(resp)?;
+        if data.get("fed").and_then(|v| v.as_bool()) == Some(true) {
+            Ok(())
+        } else {
+            Err(TalonError(format!("feed_exploration_result unexpected: {data}")))
+        }
+    }
+
+    /// 获取认知状态快照。
+    pub fn cognitive_state(&self) -> Result<CognitiveStateSnapshot, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "evo",
+            "action": "get_cognitive_state",
+            "params": {
+                "instance_id": self.instance_id
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let data = unwrap_evo_response(resp)?;
+        serde_json::from_value(data)
+            .map_err(|e| TalonError(format!("deserialize cognitive_state: {e}")))
     }
 }
 
