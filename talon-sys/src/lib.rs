@@ -511,6 +511,57 @@ impl<'a> AiEngine<'a> {
         Ok(msgs)
     }
 
+    /// 智能上下文窗口（含自动摘要压缩）。
+    ///
+    /// 当对话总 token 超过 `max_tokens × 2` 且 Chat Provider 已配置时，
+    /// Talon AI Engine 自动调用 LLM 生成旧消息摘要，再返回截取的上下文。
+    /// 未配置 LLM 则退化为普通截取。
+    pub fn get_context_window_smart(
+        &self,
+        session_id: &str,
+        max_tokens: u32,
+    ) -> Result<Vec<ContextMessage>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "get_context_window_smart",
+            "params": { "session_id": session_id, "max_tokens": max_tokens }
+        });
+        let mut resp = self.db.exec_cmd_json(&cmd)?;
+        let msgs = resp
+            .get_mut("data")
+            .and_then(|d| d.get_mut("messages"))
+            .and_then(|m| serde_json::from_value::<Vec<ContextMessage>>(m.take()).ok())
+            .unwrap_or_default();
+        Ok(msgs)
+    }
+
+    /// 自动生成上下文摘要（需要已配置 Chat Provider）。
+    ///
+    /// 获取 session 的全部历史消息，调用 LLM 生成摘要，
+    /// 存储到 session metadata 中。可选清理已摘要的旧消息。
+    pub fn auto_summarize(
+        &self,
+        session_id: &str,
+        max_summary_tokens: u32,
+        purge_old: bool,
+    ) -> Result<String, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "ai", "action": "auto_summarize",
+            "params": {
+                "session_id": session_id,
+                "max_summary_tokens": max_summary_tokens,
+                "purge_old": purge_old,
+            }
+        });
+        let resp = self.db.exec_cmd_json(&cmd)?;
+        let summary = resp
+            .get("data")
+            .and_then(|d| d.get("summary"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        Ok(summary)
+    }
+
     /// 清空 Session 的全部上下文消息。
     pub fn clear_context(&self, session_id: &str) -> Result<u64, TalonError> {
         let cmd = serde_json::json!({
