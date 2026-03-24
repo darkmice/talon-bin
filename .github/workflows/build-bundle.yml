@@ -223,17 +223,23 @@ jobs:
             Write-Error "talon.lib is suspiciously small ($fileSize bytes). Might be a cdylib import library instead of staticlib!"
             exit 1
           }
-          # 验证关键符号存在
-          $symbols = dumpbin /SYMBOLS dist-lib/talon.lib 2>&1 | Select-String "talon_bundle_init_ai"
-          if (-not $symbols) {
-            # 尝试用 /LINKERMEMBER 查找导出符号
-            $exports = dumpbin /LINKERMEMBER dist-lib/talon.lib 2>&1 | Select-String "talon_bundle_init_ai"
+          # 通过 vswhere 定位 dumpbin.exe（GitHub Actions runner 不在 Developer PS 中）
+          $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "**/dumpbin.exe" | Select-Object -First 1
+          if ($dumpbin) {
+            Write-Host "Found dumpbin: $dumpbin"
+            $exports = & $dumpbin /LINKERMEMBER dist-lib/talon.lib 2>&1 | Select-String "talon_bundle_init_ai"
             if (-not $exports) {
-              Write-Error "CRITICAL: talon_bundle_init_ai not found in talon.lib! This will cause LNK2019 on Windows."
-              exit 1
+              Write-Warning "talon_bundle_init_ai not found via dumpbin /LINKERMEMBER. Checking /SYMBOLS..."
+              $symbols = & $dumpbin /SYMBOLS dist-lib/talon.lib 2>&1 | Select-String "talon_bundle_init_ai"
+              if (-not $symbols) {
+                Write-Error "CRITICAL: talon_bundle_init_ai not found in talon.lib! This will cause LNK2019 on Windows."
+                exit 1
+              }
             }
+            Write-Host "✓ talon_bundle_init_ai symbol verified in talon.lib"
+          } else {
+            Write-Warning "dumpbin.exe not found, skipping symbol verification (file size check passed)"
           }
-          Write-Host "✓ talon_bundle_init_ai symbol verified in talon.lib"
 
       # 7b. Package talon-bundle-evocore (libtalon-evocore.*)
       - name: Package talon-bundle-evocore (Unix)
@@ -271,19 +277,25 @@ jobs:
             Write-Error "talon.lib (evocore) is suspiciously small ($fileSize bytes). Might be a cdylib import library!"
             exit 1
           }
-          $missing = @()
-          foreach ($sym in @("talon_bundle_init_ai", "talon_bundle_init_evo")) {
-            $found = dumpbin /LINKERMEMBER dist-evocore/talon.lib 2>&1 | Select-String $sym
-            if (-not $found) {
-              $found = dumpbin /SYMBOLS dist-evocore/talon.lib 2>&1 | Select-String $sym
+          $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "**/dumpbin.exe" | Select-Object -First 1
+          if ($dumpbin) {
+            Write-Host "Found dumpbin: $dumpbin"
+            $missing = @()
+            foreach ($sym in @("talon_bundle_init_ai", "talon_bundle_init_evo")) {
+              $found = & $dumpbin /LINKERMEMBER dist-evocore/talon.lib 2>&1 | Select-String $sym
+              if (-not $found) {
+                $found = & $dumpbin /SYMBOLS dist-evocore/talon.lib 2>&1 | Select-String $sym
+              }
+              if (-not $found) { $missing += $sym }
             }
-            if (-not $found) { $missing += $sym }
+            if ($missing.Count -gt 0) {
+              Write-Error "CRITICAL: Missing symbols in evocore talon.lib: $($missing -join ', ')"
+              exit 1
+            }
+            Write-Host "✓ All evocore symbols verified in talon.lib"
+          } else {
+            Write-Warning "dumpbin.exe not found, skipping symbol verification (file size check passed)"
           }
-          if ($missing.Count -gt 0) {
-            Write-Error "CRITICAL: Missing symbols in evocore talon.lib: $($missing -join ', ')"
-            exit 1
-          }
-          Write-Host "✓ All evocore symbols verified in talon.lib"
 
       # 8. Upload artifacts
       - name: Upload talon-bundle artifacts
