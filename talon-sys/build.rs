@@ -30,6 +30,12 @@ fn main() {
                 println!("cargo:rustc-link-arg=-Wl,--whole-archive");
                 println!("cargo:rustc-link-lib=static={lib_name}");
                 println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+            } else if target_os == "windows" {
+                // MSVC linker: /WHOLEARCHIVE 强制包含静态库中的所有 object，
+                // 防止 talon_bundle_init_ai 等 #[no_mangle] 符号被 dead-strip。
+                // 等价于 macOS 的 -force_load / Linux 的 --whole-archive。
+                println!("cargo:rustc-link-lib=static={lib_name}");
+                println!("cargo:rustc-link-arg=/WHOLEARCHIVE:{lib_name}.lib");
             } else {
                 println!("cargo:rustc-link-lib=static={lib_name}");
             }
@@ -126,7 +132,10 @@ fn main() {
     } else {
         format!("lib{lib_name}.a")
     };
-    // macOS: -force_load 确保静态库中的 #[ctor] 函数不被链接器丢弃
+    // 三个平台都使用 "全量包含" 策略，确保 #[no_mangle] C ABI 函数不被 dead-strip：
+    // - macOS:   -force_load
+    // - Linux:   --whole-archive
+    // - Windows: /WHOLEARCHIVE
     if target_os == "macos" {
         let lib_full = format!("{}/{}", lib_dir.display(), actual_lib_file);
         println!("cargo:rustc-link-lib=static={lib_name}");
@@ -135,6 +144,9 @@ fn main() {
         println!("cargo:rustc-link-arg=-Wl,--whole-archive");
         println!("cargo:rustc-link-lib=static={lib_name}");
         println!("cargo:rustc-link-arg=-Wl,--no-whole-archive");
+    } else if target_os == "windows" {
+        println!("cargo:rustc-link-lib=static={lib_name}");
+        println!("cargo:rustc-link-arg=/WHOLEARCHIVE:{lib_name}.lib");
     } else {
         println!("cargo:rustc-link-lib=static={lib_name}");
     }

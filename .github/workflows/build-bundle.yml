@@ -209,6 +209,32 @@ jobs:
           Copy-Item ../superclaw-db/include/talon.h dist-lib/ -ErrorAction SilentlyContinue
           cd dist-lib; tar czf libtalon-${{ matrix.name }}.tar.gz *; cd ..
 
+      # 验证 Windows staticlib 包含关键符号（防止 cdylib import lib 被误用或符号被 strip）
+      - name: Verify Windows staticlib symbols
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: talon-bin
+        run: |
+          $libFile = "dist-lib/talon.lib"
+          $fileSize = (Get-Item $libFile).Length
+          Write-Host "talon.lib size: $fileSize bytes"
+          # Import library 通常 < 100KB，staticlib 应该 > 1MB
+          if ($fileSize -lt 1048576) {
+            Write-Error "talon.lib is suspiciously small ($fileSize bytes). Might be a cdylib import library instead of staticlib!"
+            exit 1
+          }
+          # 验证关键符号存在
+          $symbols = dumpbin /SYMBOLS dist-lib/talon.lib 2>&1 | Select-String "talon_bundle_init_ai"
+          if (-not $symbols) {
+            # 尝试用 /LINKERMEMBER 查找导出符号
+            $exports = dumpbin /LINKERMEMBER dist-lib/talon.lib 2>&1 | Select-String "talon_bundle_init_ai"
+            if (-not $exports) {
+              Write-Error "CRITICAL: talon_bundle_init_ai not found in talon.lib! This will cause LNK2019 on Windows."
+              exit 1
+            }
+          }
+          Write-Host "✓ talon_bundle_init_ai symbol verified in talon.lib"
+
       # 7b. Package talon-bundle-evocore (libtalon-evocore.*)
       - name: Package talon-bundle-evocore (Unix)
         if: runner.os != 'Windows'
@@ -231,6 +257,33 @@ jobs:
           Copy-Item talon-bundle-evocore/target/${{ matrix.target }}/release/talon_bundle_evocore.dll dist-evocore/talon.dll -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/include/talon.h dist-evocore/ -ErrorAction SilentlyContinue
           cd dist-evocore; tar czf libtalon-evocore-${{ matrix.name }}.tar.gz *; cd ..
+
+      # 验证 Windows evocore staticlib 包含关键符号
+      - name: Verify Windows evocore staticlib symbols
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: talon-bin
+        run: |
+          $libFile = "dist-evocore/talon.lib"
+          $fileSize = (Get-Item $libFile).Length
+          Write-Host "talon.lib (evocore) size: $fileSize bytes"
+          if ($fileSize -lt 1048576) {
+            Write-Error "talon.lib (evocore) is suspiciously small ($fileSize bytes). Might be a cdylib import library!"
+            exit 1
+          }
+          $missing = @()
+          foreach ($sym in @("talon_bundle_init_ai", "talon_bundle_init_evo")) {
+            $found = dumpbin /LINKERMEMBER dist-evocore/talon.lib 2>&1 | Select-String $sym
+            if (-not $found) {
+              $found = dumpbin /SYMBOLS dist-evocore/talon.lib 2>&1 | Select-String $sym
+            }
+            if (-not $found) { $missing += $sym }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Error "CRITICAL: Missing symbols in evocore talon.lib: $($missing -join ', ')"
+            exit 1
+          }
+          Write-Host "✓ All evocore symbols verified in talon.lib"
 
       # 8. Upload artifacts
       - name: Upload talon-bundle artifacts

@@ -746,6 +746,7 @@ impl<'a> AiEngine<'a> {
     /// - RRF 融合排序：基于排名融合
     ///
     /// `temporal_boost`: 时间感知权重（0.0 = 关闭，推荐 0.3）。
+    /// `metadata_filter`: 可选的 metadata 过滤条件（JSON 序列化的 MetadataFilter 枚举）。
     ///
     /// 需要先调用 `set_llm_config` 配置 embed provider。
     pub fn recall(
@@ -758,6 +759,7 @@ impl<'a> AiEngine<'a> {
         rerank: bool,
         rerank_top_k: Option<usize>,
         graph_depth: usize,
+        metadata_filter: Option<&serde_json::Value>,
     ) -> Result<serde_json::Value, TalonError> {
         let mut params = serde_json::json!({
             "query": query, "k": k,
@@ -774,6 +776,9 @@ impl<'a> AiEngine<'a> {
         }
         if graph_depth > 0 {
             params["graph_depth"] = serde_json::json!(graph_depth);
+        }
+        if let Some(filter) = metadata_filter {
+            params["metadata_filter"] = filter.clone();
         }
         let cmd = serde_json::json!({
             "module": "ai", "action": "recall",
