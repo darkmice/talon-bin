@@ -489,3 +489,4 @@ jobs:
           if ! git diff --cached --quiet; then
             git commit -m "chore: update to ${{ env.RELEASE_TAG }} (core / bundle / full)"
             git push
+          fi
