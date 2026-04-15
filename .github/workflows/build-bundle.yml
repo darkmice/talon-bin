@@ -223,7 +223,7 @@ jobs:
       - name: Build Talon Core binaries (cargo)
         if: matrix.use_cross != true
         working-directory: superclaw-db
-        run: cargo build --release --bins --target ${{ matrix.target }}
+        run: cargo build --release --bins --features pgwire-server --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -231,7 +231,7 @@ jobs:
       - name: Build Talon Core binaries (cross)
         if: matrix.use_cross == true
         working-directory: superclaw-db
-        run: cross build --release --bins --target ${{ matrix.target }}
+        run: cross build --release --bins --features pgwire-server --target ${{ matrix.target }}
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
 
@@ -240,7 +240,7 @@ jobs:
       - name: Build talon-bundle (cargo)
         if: matrix.use_cross != true
         working-directory: talon-bin/talon-bundle
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --features pgwire-server --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -248,14 +248,14 @@ jobs:
       - name: Build talon-bundle (cross)
         if: matrix.use_cross == true
         working-directory: talon-bin/talon-bundle
-        run: cross build --release --target ${{ matrix.target }}
+        run: cross build --release --features pgwire-server --target ${{ matrix.target }}
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
 
       - name: Build talon-server (cargo)
         if: matrix.use_cross != true
         working-directory: talon-bin/talon-server
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --features pgwire-server --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -263,7 +263,7 @@ jobs:
       - name: Build talon-server (cross)
         if: matrix.use_cross == true
         working-directory: talon-bin/talon-server
-        run: cross build --release --target ${{ matrix.target }}
+        run: cross build --release --features pgwire-server --target ${{ matrix.target }}
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
 
@@ -276,7 +276,7 @@ jobs:
       - name: Build talon-bundle-evocore (full bundle)
         if: matrix.use_cross != true
         working-directory: talon-bin/talon-bundle-evocore
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --features pgwire-server --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -284,7 +284,7 @@ jobs:
       - name: Build talon-server-full (cargo)
         if: matrix.use_cross != true
         working-directory: talon-bin/talon-server-full
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --features pgwire-server --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           MACOSX_DEPLOYMENT_TARGET: "11.0"
