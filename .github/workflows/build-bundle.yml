@@ -127,7 +127,7 @@ jobs:
       - name: Checkout Talon Core (superclaw-db)
         uses: actions/checkout@v4
         with:
-          repository: darkmice/talon-core
+          repository: darkmice/superclaw-db
           ref: ${{ env.CORE_REF }}
           path: superclaw-db
 
