@@ -1,4 +1,4 @@
-name: Build Talon Bundle (Core + AI + EvoCore)
+name: Build Talon Modules
 
 on:
   push:
@@ -14,6 +14,22 @@ on:
         description: 'Talon AI git ref (tag/branch/sha)'
         required: true
         default: 'main'
+      talon_llm_ref:
+        description: 'Talon LLM git ref (tag/branch/sha)'
+        required: true
+        default: 'main'
+      talon_agent_ref:
+        description: 'Talon Agent git ref (tag/branch/sha)'
+        required: true
+        default: 'main'
+      talon_trace_ref:
+        description: 'Talon Trace git ref (tag/branch/sha)'
+        required: true
+        default: 'main'
+      talon_sandbox_ref:
+        description: 'Talon Sandbox git ref (tag/branch/sha)'
+        required: true
+        default: 'main'
       talon_evocore_ref:
         description: 'Talon EvoCore git ref (tag/branch/sha)'
         required: true
@@ -24,10 +40,13 @@ on:
         default: 'v0.1.18'
 
 env:
-  # Unify tag source: tag push uses GITHUB_REF, manual uses input
   RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
   CORE_REF: ${{ inputs.talon_core_ref || 'main' }}
   AI_REF: ${{ inputs.talon_ai_ref || 'main' }}
+  LLM_REF: ${{ inputs.talon_llm_ref || 'main' }}
+  AGENT_REF: ${{ inputs.talon_agent_ref || 'main' }}
+  TRACE_REF: ${{ inputs.talon_trace_ref || 'main' }}
+  SANDBOX_REF: ${{ inputs.talon_sandbox_ref || 'main' }}
   EVOCORE_REF: ${{ inputs.talon_evocore_ref || 'main' }}
 
 permissions:
@@ -92,7 +111,6 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      # 0. Fail fast if the private repo token is not configured
       - name: Verify TALON_AI_TOKEN is set
         shell: bash
         run: |
@@ -101,13 +119,11 @@ jobs:
             exit 1
           fi
 
-      # 1. Checkout talon-bin (this repo, contains talon-bundle, talon-bundle-evocore, talon-sys)
       - name: Checkout talon-bin
         uses: actions/checkout@v4
         with:
           path: talon-bin
 
-      # 2. Checkout talon core (public, open source)
       - name: Checkout Talon Core (superclaw-db)
         uses: actions/checkout@v4
         with:
@@ -115,7 +131,6 @@ jobs:
           ref: ${{ env.CORE_REF }}
           path: superclaw-db
 
-      # 3. Checkout talon-ai (private, closed source) — 需要 PAT
       - name: Checkout Talon AI (private)
         uses: actions/checkout@v4
         with:
@@ -124,7 +139,38 @@ jobs:
           token: ${{ secrets.TALON_AI_TOKEN }}
           path: talon-ai
 
-      # 4. Checkout talon-evo-core (private, closed source) — 需要 PAT
+      - name: Checkout Talon LLM (private)
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-llm
+          ref: ${{ env.LLM_REF }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-llm
+
+      - name: Checkout Talon Agent (private)
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-agent
+          ref: ${{ env.AGENT_REF }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-agent
+
+      - name: Checkout Talon Trace (private)
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-trace
+          ref: ${{ env.TRACE_REF }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-trace
+
+      - name: Checkout Talon Sandbox (private)
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-sandbox
+          ref: ${{ env.SANDBOX_REF }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-sandbox
+
       - name: Checkout Talon EvoCore (private)
         uses: actions/checkout@v4
         with:
@@ -133,13 +179,11 @@ jobs:
           token: ${{ secrets.TALON_AI_TOKEN }}
           path: talon-evo-core
 
-      # 5. Install Rust
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      # 6. Install cross-compilation tools
       - name: Install cross-compilation tools (apt)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
@@ -150,7 +194,24 @@ jobs:
         if: matrix.use_cross == true
         run: cargo install cross --git https://github.com/cross-rs/cross
 
-      # ─── Build talon-bundle (core + AI) ─────────────────────────────────
+      # ─── Build core-only ────────────────────────────────────────────────
+
+      - name: Build Talon Core (cargo)
+        if: matrix.use_cross != true
+        working-directory: superclaw-db
+        run: cargo build --release --lib --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+      - name: Build Talon Core (cross)
+        if: matrix.use_cross == true
+        working-directory: superclaw-db
+        run: cross build --release --lib --target ${{ matrix.target }}
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+      # ─── Build default bundle: core + ai + llm + agent ─────────────────
 
       - name: Build talon-bundle (cargo)
         if: matrix.use_cross != true
@@ -167,9 +228,13 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: "11.0"
 
-      # ─── Build talon-bundle-evocore (core + AI + EvoCore) ───────────────
+      # ─── Build full bundle: default stack + trace + sandbox + evocore ──
 
-      - name: Build talon-bundle-evocore (cargo)
+      - name: Skip full bundle on cross-only targets
+        if: matrix.use_cross == true
+        run: echo "Skipping full bundle for ${{ matrix.target }}"
+
+      - name: Build talon-bundle-evocore (full bundle)
         if: matrix.use_cross != true
         working-directory: talon-bin/talon-bundle-evocore
         run: cargo build --release --target ${{ matrix.target }}
@@ -177,22 +242,34 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           MACOSX_DEPLOYMENT_TARGET: "11.0"
 
-      - name: Build talon-bundle-evocore (cross)
-        if: matrix.use_cross == true
-        working-directory: talon-bin/talon-bundle-evocore
-        run: cross build --release --target ${{ matrix.target }}
-        env:
-          MACOSX_DEPLOYMENT_TARGET: "11.0"
-
       # ─── Package libraries ─────────────────────────────────────────────
 
-      # 7a. Package talon-bundle (libtalon.*)
+      - name: Package Talon Core (Unix)
+        if: runner.os != 'Windows'
+        working-directory: talon-bin
+        run: |
+          mkdir -p dist-core
+          cp ../superclaw-db/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} dist-core/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} 2>/dev/null || true
+          cp ../superclaw-db/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} dist-core/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} 2>/dev/null || true
+          cp ../superclaw-db/include/talon.h dist-core/ 2>/dev/null || true
+          cd dist-core && tar czf libtalon-core-${{ matrix.name }}.tar.gz * && cd ..
+
+      - name: Package Talon Core (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: talon-bin
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-core
+          Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon.lib dist-core/talon.lib -ErrorAction SilentlyContinue
+          Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon.dll dist-core/talon.dll -ErrorAction SilentlyContinue
+          Copy-Item ../superclaw-db/include/talon.h dist-core/ -ErrorAction SilentlyContinue
+          cd dist-core; tar czf libtalon-core-${{ matrix.name }}.tar.gz *; cd ..
+
       - name: Package talon-bundle (Unix)
         if: runner.os != 'Windows'
         working-directory: talon-bin
         run: |
           mkdir -p dist-lib
-          # Copy and rename: talon_bundle → talon (external consumers expect libtalon.a)
           cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle.${{ matrix.lib_ext }} dist-lib/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} 2>/dev/null || true
           cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle.${{ matrix.dylib_ext }} dist-lib/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} 2>/dev/null || true
           cp ../superclaw-db/include/talon.h dist-lib/ 2>/dev/null || true
@@ -209,8 +286,7 @@ jobs:
           Copy-Item ../superclaw-db/include/talon.h dist-lib/ -ErrorAction SilentlyContinue
           cd dist-lib; tar czf libtalon-${{ matrix.name }}.tar.gz *; cd ..
 
-      # 验证 Windows staticlib 包含关键符号（防止 cdylib import lib 被误用或符号被 strip）
-      - name: Verify Windows staticlib symbols
+      - name: Verify Windows default bundle symbols
         if: runner.os == 'Windows'
         shell: pwsh
         working-directory: talon-bin
@@ -218,12 +294,10 @@ jobs:
           $libFile = "dist-lib/talon.lib"
           $fileSize = (Get-Item $libFile).Length
           Write-Host "talon.lib size: $fileSize bytes"
-          # Import library 通常 < 100KB，staticlib 应该 > 1MB
           if ($fileSize -lt 1048576) {
             Write-Error "talon.lib is suspiciously small ($fileSize bytes). Might be a cdylib import library instead of staticlib!"
             exit 1
           }
-          # 通过 vswhere 定位 dumpbin.exe（GitHub Actions runner 不在 Developer PS 中）
           $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "**/dumpbin.exe" | Select-Object -First 1
           if ($dumpbin) {
             Write-Host "Found dumpbin: $dumpbin"
@@ -241,40 +315,37 @@ jobs:
             Write-Warning "dumpbin.exe not found, skipping symbol verification (file size check passed)"
           }
 
-      # 7b. Package talon-bundle-evocore (libtalon-evocore.*)
-      - name: Package talon-bundle-evocore (Unix)
-        if: runner.os != 'Windows'
+      - name: Package talon-bundle-evocore (full bundle, Unix)
+        if: runner.os != 'Windows' && matrix.use_cross != true
         working-directory: talon-bin
         run: |
-          mkdir -p dist-evocore
-          # Copy and rename: talon_bundle_evocore → talon (same C ABI, superset of talon-bundle)
-          cp talon-bundle-evocore/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle_evocore.${{ matrix.lib_ext }} dist-evocore/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} 2>/dev/null || true
-          cp talon-bundle-evocore/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle_evocore.${{ matrix.dylib_ext }} dist-evocore/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} 2>/dev/null || true
-          cp ../superclaw-db/include/talon.h dist-evocore/ 2>/dev/null || true
-          cd dist-evocore && tar czf libtalon-evocore-${{ matrix.name }}.tar.gz * && cd ..
+          mkdir -p dist-full
+          cp talon-bundle-evocore/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle_evocore.${{ matrix.lib_ext }} dist-full/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} 2>/dev/null || true
+          cp talon-bundle-evocore/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle_evocore.${{ matrix.dylib_ext }} dist-full/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} 2>/dev/null || true
+          cp ../superclaw-db/include/talon.h dist-full/ 2>/dev/null || true
+          cd dist-full && tar czf libtalon-evocore-${{ matrix.name }}.tar.gz * && cd ..
 
-      - name: Package talon-bundle-evocore (Windows)
-        if: runner.os == 'Windows'
+      - name: Package talon-bundle-evocore (full bundle, Windows)
+        if: runner.os == 'Windows' && matrix.use_cross != true
         shell: pwsh
         working-directory: talon-bin
         run: |
-          New-Item -ItemType Directory -Force -Path dist-evocore
-          Copy-Item talon-bundle-evocore/target/${{ matrix.target }}/release/talon_bundle_evocore.lib dist-evocore/talon.lib -ErrorAction SilentlyContinue
-          Copy-Item talon-bundle-evocore/target/${{ matrix.target }}/release/talon_bundle_evocore.dll dist-evocore/talon.dll -ErrorAction SilentlyContinue
-          Copy-Item ../superclaw-db/include/talon.h dist-evocore/ -ErrorAction SilentlyContinue
-          cd dist-evocore; tar czf libtalon-evocore-${{ matrix.name }}.tar.gz *; cd ..
+          New-Item -ItemType Directory -Force -Path dist-full
+          Copy-Item talon-bundle-evocore/target/${{ matrix.target }}/release/talon_bundle_evocore.lib dist-full/talon.lib -ErrorAction SilentlyContinue
+          Copy-Item talon-bundle-evocore/target/${{ matrix.target }}/release/talon_bundle_evocore.dll dist-full/talon.dll -ErrorAction SilentlyContinue
+          Copy-Item ../superclaw-db/include/talon.h dist-full/ -ErrorAction SilentlyContinue
+          cd dist-full; tar czf libtalon-evocore-${{ matrix.name }}.tar.gz *; cd ..
 
-      # 验证 Windows evocore staticlib 包含关键符号
-      - name: Verify Windows evocore staticlib symbols
-        if: runner.os == 'Windows'
+      - name: Verify Windows full bundle symbols
+        if: runner.os == 'Windows' && matrix.use_cross != true
         shell: pwsh
         working-directory: talon-bin
         run: |
-          $libFile = "dist-evocore/talon.lib"
+          $libFile = "dist-full/talon.lib"
           $fileSize = (Get-Item $libFile).Length
-          Write-Host "talon.lib (evocore) size: $fileSize bytes"
+          Write-Host "talon.lib (full) size: $fileSize bytes"
           if ($fileSize -lt 1048576) {
-            Write-Error "talon.lib (evocore) is suspiciously small ($fileSize bytes). Might be a cdylib import library!"
+            Write-Error "talon.lib (full) is suspiciously small ($fileSize bytes). Might be a cdylib import library!"
             exit 1
           }
           $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -find "**/dumpbin.exe" | Select-Object -First 1
@@ -282,33 +353,39 @@ jobs:
             Write-Host "Found dumpbin: $dumpbin"
             $missing = @()
             foreach ($sym in @("talon_bundle_init_ai", "talon_bundle_init_evo")) {
-              $found = & $dumpbin /LINKERMEMBER dist-evocore/talon.lib 2>&1 | Select-String $sym
+              $found = & $dumpbin /LINKERMEMBER dist-full/talon.lib 2>&1 | Select-String $sym
               if (-not $found) {
-                $found = & $dumpbin /SYMBOLS dist-evocore/talon.lib 2>&1 | Select-String $sym
+                $found = & $dumpbin /SYMBOLS dist-full/talon.lib 2>&1 | Select-String $sym
               }
               if (-not $found) { $missing += $sym }
             }
             if ($missing.Count -gt 0) {
-              Write-Error "CRITICAL: Missing symbols in evocore talon.lib: $($missing -join ', ')"
+              Write-Error "CRITICAL: Missing symbols in full talon.lib: $($missing -join ', ')"
               exit 1
             }
-            Write-Host "✓ All evocore symbols verified in talon.lib"
+            Write-Host "✓ All full-bundle symbols verified in talon.lib"
           } else {
             Write-Warning "dumpbin.exe not found, skipping symbol verification (file size check passed)"
           }
 
-      # 8. Upload artifacts
-      - name: Upload talon-bundle artifacts
+      - name: Upload Talon Core artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: libtalon-core-${{ matrix.name }}
+          path: talon-bin/dist-core/libtalon-core-${{ matrix.name }}.tar.gz
+
+      - name: Upload default bundle artifacts
         uses: actions/upload-artifact@v4
         with:
           name: libtalon-${{ matrix.name }}
           path: talon-bin/dist-lib/libtalon-${{ matrix.name }}.tar.gz
 
-      - name: Upload talon-bundle-evocore artifacts
+      - name: Upload full bundle artifacts
+        if: matrix.use_cross != true
         uses: actions/upload-artifact@v4
         with:
           name: libtalon-evocore-${{ matrix.name }}
-          path: talon-bin/dist-evocore/libtalon-evocore-${{ matrix.name }}.tar.gz
+          path: talon-bin/dist-full/libtalon-evocore-${{ matrix.name }}.tar.gz
 
   release:
     needs: build
@@ -337,52 +414,41 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: "Talon ${{ env.RELEASE_TAG }} (Core + AI + EvoCore)"
+          name: "Talon ${{ env.RELEASE_TAG }} (Core / Bundle / Full)"
           body: |
             ## Talon ${{ env.RELEASE_TAG }}
 
-            AI-native multi-model data engine: SQL + KV + TimeSeries + MQ + Vector + Graph + Geo + FTS + **AI Engine** + **EvoCore**.
+            只打包 Talon 生态自己的模块，不包含各语言 SDK。
 
-            ### Three-tier library architecture (matryoshka)
+            ### Artifact families
 
-            ```
-            libtalon-evocore.a  ⊃  libtalon.a (with AI)
-                 (最全)                (基础+AI)
-            ```
-
-            | Library | Contains | Use case |
-            |---------|----------|----------|
-            | `libtalon-*.tar.gz` | Core + AI Engine | Standard usage |
-            | `libtalon-evocore-*.tar.gz` | Core + AI + EvoCore | Self-evolution capabilities |
+            | Archive prefix | Contains | Use case |
+            |----------------|----------|----------|
+            | `libtalon-core-*.tar.gz` | Talon core only | 纯 Talon 数据引擎，不带 AI / LLM / Agent |
+            | `libtalon-*.tar.gz` | Talon core + talon-ai + talon-llm + talon-agent | 默认 Talon bundle |
+            | `libtalon-evocore-*.tar.gz` | Default bundle + talon-trace + talon-sandbox + talon-evo-core | 全量 bundle（保留旧前缀做兼容） |
 
             ### Platform support
 
-            | Platform | Architecture | Core+AI | Core+AI+EvoCore |
-            |----------|-------------|---------|-----------------|
-            | Linux | x86_64 | ✅ | ✅ |
-            | Linux | aarch64 | ✅ | ✅ |
-            | macOS | x86_64 | ✅ | ✅ |
-            | macOS | aarch64 (Apple Silicon) | ✅ | ✅ |
-            | Windows | x86_64 | ✅ | ✅ |
-            | Windows | aarch64 (ARM) | ✅ | ✅ |
-            | Linux | loongarch64 (龙芯) | ✅ | ✅ |
-            | Linux | riscv64 | ✅ | ✅ |
+            | Platform | Pure Talon | AI Bundle | Full Bundle |
+            |----------|------------|-----------|-------------|
+            | Linux x86_64 | ✅ | ✅ | ✅ |
+            | Linux aarch64 | ✅ | ✅ | ✅ |
+            | macOS x86_64 | ✅ | ✅ | ✅ |
+            | macOS aarch64 | ✅ | ✅ | ✅ |
+            | Windows x86_64 | ✅ | ✅ | ✅ |
+            | Windows aarch64 | ✅ | ✅ | ✅ |
+            | Linux loongarch64 | ✅ | ✅ | - |
+            | Linux riscv64 | ✅ | ✅ | - |
 
             ### Rust usage
 
-            **Core + AI (default):**
-            ```toml
-            [dependencies]
-            talon = { git = "https://github.com/darkmice/talon-bin.git", tag = "${{ env.RELEASE_TAG }}", package = "talon-sys" }
-            ```
+            `talon-sys` 默认继续下载 `libtalon-*`（AI Bundle），启用 `evocore` feature 时继续下载 `libtalon-evocore-*`（现在对应 Full Bundle）。
 
-            **Core + AI + EvoCore:**
-            ```toml
-            [dependencies]
-            talon = { git = "https://github.com/darkmice/talon-bin.git", tag = "${{ env.RELEASE_TAG }}", package = "talon-sys", features = ["evocore"] }
-            ```
+            `libtalon-core-*` 供纯 Talon 原生集成或自定义打包使用。
 
             ### Verify checksums
+
             ```bash
             sha256sum -c SHA256SUMS.txt
             ```
@@ -397,8 +463,10 @@ jobs:
     steps:
       - name: Checkout talon-bin
         uses: actions/checkout@v4
+        with:
+          ref: main
 
-      - name: Download macOS ARM64 library
+      - name: Download macOS ARM64 default bundle
         uses: actions/download-artifact@v4
         with:
           name: libtalon-talon-macos-arm64
@@ -406,9 +474,11 @@ jobs:
 
       - name: Update talon-sys build script
         run: |
-          # Update the download tag in talon-sys/build.rs
-          sed -i "s|TALON_VERSION = \".*\"|TALON_VERSION = \"${{ env.RELEASE_TAG }}\"|" talon-sys/build.rs || true
-          echo "Updated talon-sys to ${{ env.RELEASE_TAG }}"
+          VERSION="${RELEASE_TAG#v}"
+          sed -i "s|TALON_LIB_VERSION: &str = \".*\"|TALON_LIB_VERSION: &str = \"${VERSION}\"|" talon-sys/build.rs
+          echo "Updated talon-sys to ${VERSION}"
+        env:
+          RELEASE_TAG: ${{ env.RELEASE_TAG }}
 
       - name: Commit and tag
         run: |
@@ -416,8 +486,5 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "chore: update to ${{ env.RELEASE_TAG }} (Core + AI + EvoCore)"
+            git commit -m "chore: update to ${{ env.RELEASE_TAG }} (core / bundle / full)"
             git push
-          fi
-          git tag "${{ env.RELEASE_TAG }}" || true
-          git push origin "${{ env.RELEASE_TAG }}" || true

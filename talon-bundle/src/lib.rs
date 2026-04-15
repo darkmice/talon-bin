@@ -3,15 +3,25 @@
  * Author: dark.lijin@gmail.com
  * Licensed under the Talon Community Dual License Agreement.
  */
-//! Talon Bundle: 将 Talon 核心引擎 + AI 扩展打包为单一预编译库。
+//! Talon Bundle: 将 Talon 核心引擎 + AI / LLM / Agent 默认栈打包为单一预编译库。
 //!
 //! 提供两种 AI handler 注册机制（互补，确保在各平台均能正确工作）：
 //!
 //! 1. **`#[ctor]`（自动）**：库加载时自动注册，适用于动态链接或 force_load 场景。
 //! 2. **`talon_bundle_init_ai()`（显式 C ABI）**：供 `talon-sys` 的 `Talon::open` 显式调用，
 //!    彻底绕开 macOS 静态链接 dead-stripping 对 ctor 的破坏。
+//!
+//! 说明：
+//! - `talon-ai` 仍然是当前需要显式注册到 Talon JSON 路由器的模块；
+//! - `talon-llm` 与 `talon-agent` 作为默认栈依赖一并编译进 bundle；
+//! - `talon-trace` / `talon-sandbox` / `talon-evo-core` 只进入 full bundle，不进入默认 bundle。
 
 use std::sync::OnceLock;
+
+#[allow(unused_imports)]
+use talon_agent as _;
+#[allow(unused_imports)]
+use talon_llm as _;
 
 static AI_INIT: OnceLock<()> = OnceLock::new();
 

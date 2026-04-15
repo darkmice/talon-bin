@@ -3,7 +3,7 @@ name: Publish SDK Packages
 on:
   # Trigger after build-bundle completes
   workflow_run:
-    workflows: ["Build Talon Bundle (Core + AI)"]
+    workflows: ["Build Talon Modules"]
     types: [completed]
   # Manual trigger
   workflow_dispatch:

@@ -3,7 +3,7 @@ name = "talon-bundle"
 version = "0.1.15"
 edition = "2021"
 publish = false
-description = "Talon full bundle: core engine + AI extension (pre-compiled binary)"
+description = "Talon default bundle: core engine + AI + LLM + Agent (pre-compiled binary)"
 
 [dependencies]
 # Core engine (public, open source)
@@ -11,6 +11,12 @@ talon = { path = "../../superclaw-db" }
 
 # AI extension (private, closed source, paid module)
 talon-ai = { path = "../../talon-ai" }
+
+# LLM engine (private, closed source, paid module)
+talon-llm = { path = "../../talon-llm" }
+
+# Agent runtime (private, closed source, paid module)
+talon-agent = { path = "../../talon-agent" }
 
 # Used to auto-register AI handler at program startup
 ctor = "0.2"

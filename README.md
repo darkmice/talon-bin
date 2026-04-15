@@ -24,16 +24,15 @@ Each binary archive contains:
 - `talon-<platform>-cli` — Command-line client
 - `talon-<platform>-tui` — Terminal UI
 
-### Libraries (for embedding)
+### Libraries (only Talon modules)
 
-| Platform | Architecture | File |
-|----------|-------------|------|
-| Linux | x86_64 | `libtalon-talon-linux-amd64.tar.gz` |
-| Linux | aarch64 | `libtalon-talon-linux-arm64.tar.gz` |
-| macOS | x86_64 (Intel) | `libtalon-talon-macos-amd64.tar.gz` |
-| macOS | aarch64 (Apple Silicon) | `libtalon-talon-macos-arm64.tar.gz` |
+| Artifact | Contains | Notes |
+|----------|----------|-------|
+| `libtalon-core-<platform>.tar.gz` | Talon core only | 不带 AI / LLM / Agent |
+| `libtalon-<platform>.tar.gz` | Talon core + `talon-ai` + `talon-llm` + `talon-agent` | 默认 bundle |
+| `libtalon-evocore-<platform>.tar.gz` | Default bundle + `talon-trace` + `talon-sandbox` + `talon-evo-core` | 全量 bundle（保留旧前缀做兼容） |
 
-Each library archive contains `libtalon.so` / `libtalon.dylib` + `talon.h`.
+三个归档都包含 `talon.h`。
 
 ## Quick Start (Binary)
 

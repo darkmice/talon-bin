@@ -3,7 +3,7 @@ name = "talon-bundle-evocore"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Talon full bundle: core engine + AI extension + EvoCore evolution engine (pre-compiled binary)"
+description = "Talon full bundle: core + AI + LLM + Agent + Trace + Sandbox + EvoCore (pre-compiled binary)"
 
 [dependencies]
 # Core engine (public, open source)
@@ -11,6 +11,18 @@ talon = { path = "../../superclaw-db" }
 
 # AI extension (private, closed source, paid module)
 talon-ai = { path = "../../talon-ai" }
+
+# LLM engine (private, closed source, paid module)
+talon-llm = { path = "../../talon-llm" }
+
+# Agent runtime (private, closed source, paid module)
+talon-agent = { path = "../../talon-agent" }
+
+# Trace module (private, closed source, paid module)
+talon-trace = { path = "../../talon-trace" }
+
+# Sandbox module (private, closed source, paid module)
+talon-sandbox = { path = "../../talon-sandbox" }
 
 # EvoCore evolution engine (private, closed source, paid module)
 talon-evo-core = { path = "../../talon-evo-core" }
