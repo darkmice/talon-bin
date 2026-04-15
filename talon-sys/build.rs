@@ -54,14 +54,14 @@ fn main() {
     let lib_dir = out_dir.join("talon-lib");
     fs::create_dir_all(&lib_dir).unwrap();
 
-    let (target_name, lib_file) = match (target_os.as_str(), target_arch.as_str()) {
-        ("linux", "x86_64") => ("talon-linux-amd64", "libtalon.a"),
-        ("linux", "aarch64") => ("talon-linux-arm64", "libtalon.a"),
-        ("macos", "x86_64") => ("talon-macos-amd64", "libtalon.a"),
-        ("macos", "aarch64") => ("talon-macos-arm64", "libtalon.a"),
-        ("windows", "x86_64") => ("talon-windows-amd64", "talon.lib"),
-        ("linux", "loongarch64") => ("talon-linux-loongarch64", "libtalon.a"),
-        ("linux", "riscv64") | ("linux", "riscv64gc") => ("talon-linux-riscv64", "libtalon.a"),
+    let (platform_suffix, lib_file) = match (target_os.as_str(), target_arch.as_str()) {
+        ("linux", "x86_64") => ("linux-amd64", "libtalon.a"),
+        ("linux", "aarch64") => ("linux-arm64", "libtalon.a"),
+        ("macos", "x86_64") => ("macos-amd64", "libtalon.a"),
+        ("macos", "aarch64") => ("macos-arm64", "libtalon.a"),
+        ("windows", "x86_64") => ("windows-amd64", "talon.lib"),
+        ("linux", "loongarch64") => ("linux-loongarch64", "libtalon.a"),
+        ("linux", "riscv64") | ("linux", "riscv64gc") => ("linux-riscv64", "libtalon.a"),
         (os, arch) => {
             panic!(
                 "Unsupported platform: {os}-{arch}. Talon supports linux/macos/windows on x86_64/aarch64/loongarch64/riscv64."
@@ -78,7 +78,7 @@ fn main() {
 
         // evocore feature 启用时下载 libtalon-evocore-*，否则 libtalon-*
         let archive_prefix = if has_evocore { "libtalon-evocore" } else { "libtalon" };
-        let archive_name = format!("{archive_prefix}-{target_name}.tar.gz");
+        let archive_name = format!("{archive_prefix}-{platform_suffix}.tar.gz");
         let url = format!(
             "https://github.com/darkmice/talon-bin/releases/download/v{TALON_LIB_VERSION}/{archive_name}"
         );

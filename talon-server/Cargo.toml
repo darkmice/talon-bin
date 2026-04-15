@@ -1,0 +1,18 @@
+[package]
+name = "talon-server"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Talon service binary: core + AI + LLM + Agent"
+
+[features]
+default = []
+pgwire-server = ["dep:tokio", "talon/pgwire-server"]
+
+[dependencies]
+talon = { package = "talon-bundle", path = "../talon-bundle" }
+tokio = { version = "1", features = ["full"], optional = true }
+
+[[bin]]
+name = "talon"
+path = "src/main.rs"

@@ -12,17 +12,13 @@ Go to the [Releases](https://github.com/darkmice/talon-bin/releases) page to dow
 
 ### Binaries
 
-| Platform | Architecture | File |
-|----------|-------------|------|
-| Linux | x86_64 | `talon-linux-amd64.tar.gz` |
-| Linux | aarch64 | `talon-linux-arm64.tar.gz` |
-| macOS | x86_64 (Intel) | `talon-macos-amd64.tar.gz` |
-| macOS | aarch64 (Apple Silicon) | `talon-macos-arm64.tar.gz` |
+| Artifact | Contains | Notes |
+|----------|----------|-------|
+| `talon-core-<platform>.tar.gz` | `talon` + `talon-cli` + `talon-tui` | 纯 Talon Core 服务端 |
+| `talon-<platform>.tar.gz` | `talon` + `talon-cli` + `talon-tui` | 默认 bundle：core + ai + llm + agent |
+| `talon-full-<platform>.tar.gz` | `talon` + `talon-cli` + `talon-tui` | 全量 bundle：默认 + trace + sandbox + evocore |
 
-Each binary archive contains:
-- `talon-<platform>` — Server binary
-- `talon-<platform>-cli` — Command-line client
-- `talon-<platform>-tui` — Terminal UI
+`talon` 用于启动服务；`talon-cli` 和 `talon-tui` 用于通过 TCP 方式连接服务端。
 
 ### Libraries (only Talon modules)
 
@@ -37,15 +33,15 @@ Each binary archive contains:
 ## Quick Start (Binary)
 
 ```bash
-# Download and extract (example: macOS Apple Silicon)
+# Download and extract (example: macOS Apple Silicon, default bundle)
 curl -LO https://github.com/darkmice/talon-bin/releases/latest/download/talon-macos-arm64.tar.gz
 tar xzf talon-macos-arm64.tar.gz
 
 # Start the server
-./talon-macos-arm64
+./talon --addr 127.0.0.1:7720 --tcp-addr 127.0.0.1:7729
 
 # Or use the CLI
-./talon-macos-arm64-cli
+./talon-cli --url "talon://127.0.0.1:7729"
 ```
 
 ## Use as Rust Dependency

@@ -5,6 +5,10 @@ edition = "2021"
 publish = false
 description = "Talon full bundle: core + AI + LLM + Agent + Trace + Sandbox + EvoCore (pre-compiled binary)"
 
+[features]
+default = []
+pgwire-server = ["talon/pgwire-server"]
+
 [dependencies]
 # Core engine (public, open source)
 talon = { path = "../../superclaw-db" }
@@ -36,7 +40,7 @@ tracing = "0.1"
 [lib]
 name = "talon_bundle_evocore"
 path = "src/lib.rs"
-crate-type = ["staticlib", "cdylib"]
+crate-type = ["rlib", "staticlib", "cdylib"]
 
 # ── 防反编译 Release Profile ──
 [profile.release]

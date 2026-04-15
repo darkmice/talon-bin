@@ -1,0 +1,18 @@
+[package]
+name = "talon-server-full"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Talon full service binary: core + AI + LLM + Agent + Trace + Sandbox + EvoCore"
+
+[features]
+default = []
+pgwire-server = ["dep:tokio", "talon/pgwire-server"]
+
+[dependencies]
+talon = { package = "talon-bundle-evocore", path = "../talon-bundle-evocore" }
+tokio = { version = "1", features = ["full"], optional = true }
+
+[[bin]]
+name = "talon"
+path = "src/main.rs"
