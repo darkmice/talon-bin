@@ -124,11 +124,12 @@ jobs:
         with:
           path: talon-bin
 
-      - name: Checkout Talon Core (superclaw-db)
+      - name: Checkout Talon Core (private)
         uses: actions/checkout@v4
         with:
-          repository: darkmice/superclaw-db
+          repository: darkmice/talon-core
           ref: ${{ env.CORE_REF }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
           path: superclaw-db
 
       - name: Checkout Talon AI (private)
