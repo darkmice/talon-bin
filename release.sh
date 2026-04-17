@@ -79,7 +79,9 @@ BUILD_RS="$SCRIPT_DIR/talon-sys/build.rs"
 if grep -q "TALON_LIB_VERSION: &str = \"$VERSION\"" "$BUILD_RS"; then
     log "build.rs TALON_LIB_VERSION 已是 $VERSION"
 else
-    sed -i '' "s/TALON_LIB_VERSION: &str = \"[^\"]*\"/TALON_LIB_VERSION: \&str = \"$VERSION\"/" "$BUILD_RS"
+    perl -0pi -e 's@^\s*const TALON_LIB_VERSION:.*?;$@        const TALON_LIB_VERSION: &str = "'"$VERSION"'";@m' "$BUILD_RS"
+    grep -q "TALON_LIB_VERSION: &str = \"$VERSION\"" "$BUILD_RS" \
+        || err "未能更新 build.rs 中的 TALON_LIB_VERSION"
     log "build.rs TALON_LIB_VERSION → $VERSION"
 fi
 
