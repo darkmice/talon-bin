@@ -74,7 +74,7 @@ fn main() {
     if !lib_path.exists() {
         // 预编译库版本 — 仅在底层 C 库（talon/talon-ai/talon-evo-core）变更时更新。
         // talon-sys 的 Rust FFI 绑定代码变更不需要更新此版本。
-        const TALON_LIB_VERSION: &str = "0.1.37";
+        const TALON_LIB_VERSION: TALON_LIB_VERSION: &str = "0.1.37"str = "0.1.37";
 
         // evocore feature 启用时下载 libtalon-evocore-*，否则 libtalon-*
         let archive_prefix = if has_evocore { "libtalon-evocore" } else { "libtalon" };
