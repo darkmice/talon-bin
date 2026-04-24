@@ -12,9 +12,13 @@
 use std::collections::BTreeMap;
 use std::ffi::{CStr, CString};
 use std::fmt;
+use std::io::{Read, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::ptr;
 use std::slice;
+use std::sync::Mutex;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -53,6 +57,758 @@ impl std::error::Error for TalonError {}
 impl From<std::ffi::NulError> for TalonError {
     fn from(e: std::ffi::NulError) -> Self {
         TalonError(format!("NUL byte in string: {e}"))
+    }
+}
+
+// ── Remote Client 类型 ─────────────────────────────────────────────────────
+
+const DEFAULT_REMOTE_TIMEOUT_SECS: u64 = 5;
+const MAX_REMOTE_FRAME_SIZE: u32 = 16 * 1024 * 1024;
+
+/// Remote client error classes used by the `talon://` TCP client.
+///
+/// Remote APIs still return `TalonError` for source compatibility. Error
+/// messages are prefixed with `remote <kind>:` using these stable classes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TalonRemoteErrorKind {
+    InvalidEndpoint,
+    Connect,
+    Timeout,
+    Auth,
+    Handshake,
+    Protocol,
+    Server,
+    Io,
+}
+
+impl TalonRemoteErrorKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TalonRemoteErrorKind::InvalidEndpoint => "invalid-endpoint",
+            TalonRemoteErrorKind::Connect => "connect",
+            TalonRemoteErrorKind::Timeout => "timeout",
+            TalonRemoteErrorKind::Auth => "auth",
+            TalonRemoteErrorKind::Handshake => "handshake",
+            TalonRemoteErrorKind::Protocol => "protocol",
+            TalonRemoteErrorKind::Server => "server",
+            TalonRemoteErrorKind::Io => "io",
+        }
+    }
+}
+
+fn remote_error(kind: TalonRemoteErrorKind, msg: impl Into<String>) -> TalonError {
+    TalonError(format!("remote {}: {}", kind.as_str(), msg.into()))
+}
+
+fn remote_io_error(
+    fallback_kind: TalonRemoteErrorKind,
+    context: &str,
+    err: std::io::Error,
+) -> TalonError {
+    let kind = match err.kind() {
+        std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
+            TalonRemoteErrorKind::Timeout
+        }
+        _ => fallback_kind,
+    };
+    remote_error(kind, format!("{context}: {err}"))
+}
+
+#[derive(Debug, Clone)]
+struct RemoteEndpoint {
+    endpoint: String,
+    addr: String,
+    auth_token: Option<String>,
+    timeout: Duration,
+}
+
+/// TCP client for a remote Talon server exposed at `talon://host:port`.
+///
+/// Supported URI forms:
+/// - `talon://host:port`
+/// - `talon://host:port?auth_token=secret`
+/// - `talon://host:port?timeout_ms=5000`
+///
+/// The wire protocol matches the server TCP frame protocol:
+/// `[4-byte big-endian length][JSON command payload]`.
+#[derive(Debug)]
+pub struct TalonRemoteClient {
+    endpoint: String,
+    addr: String,
+    auth_token: Option<String>,
+    timeout: Duration,
+    stream: Mutex<TcpStream>,
+}
+
+impl TalonRemoteClient {
+    /// Connect to a remote Talon TCP endpoint using the default 5s timeout.
+    pub fn connect(endpoint: &str) -> Result<Self, TalonError> {
+        Self::connect_with_timeout(endpoint, Duration::from_secs(DEFAULT_REMOTE_TIMEOUT_SECS))
+    }
+
+    /// Connect to a remote Talon TCP endpoint with an explicit timeout.
+    pub fn connect_with_timeout(endpoint: &str, timeout: Duration) -> Result<Self, TalonError> {
+        let parsed = parse_talon_remote_endpoint(endpoint, timeout)?;
+        let mut stream = connect_remote_stream(&parsed)?;
+        if let Some(token) = parsed.auth_token.as_deref() {
+            authenticate_remote_stream(&mut stream, token)?;
+        }
+        Ok(Self {
+            endpoint: parsed.endpoint,
+            addr: parsed.addr,
+            auth_token: parsed.auth_token,
+            timeout: parsed.timeout,
+            stream: Mutex::new(stream),
+        })
+    }
+
+    /// Original endpoint string supplied by the caller.
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// Resolved `host:port` authority used for TCP connections.
+    pub fn address(&self) -> &str {
+        &self.addr
+    }
+
+    /// Read/write/connect timeout used by this client.
+    pub fn timeout(&self) -> Duration {
+        self.timeout
+    }
+
+    /// Whether the client performed token authentication during handshake.
+    pub fn has_auth_token(&self) -> bool {
+        self.auth_token.is_some()
+    }
+
+    /// Execute SQL remotely and return rows using the same `Value` shape as embedded mode.
+    pub fn run_sql(&self, sql: &str) -> Result<Vec<Vec<Value>>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "sql",
+            "action": "",
+            "params": { "sql": sql }
+        });
+        let resp = self.exec_cmd_json(&cmd)?;
+        let data = remote_response_data(&resp)?.ok_or_else(|| {
+            remote_error(
+                TalonRemoteErrorKind::Protocol,
+                format!("SQL response missing data: {resp}"),
+            )
+        })?;
+        let rows = data.get("rows").and_then(|r| r.as_array()).ok_or_else(|| {
+            remote_error(
+                TalonRemoteErrorKind::Protocol,
+                format!("SQL response missing rows array: {resp}"),
+            )
+        })?;
+        rows.iter()
+            .map(|row| {
+                row.as_array()
+                    .ok_or_else(|| {
+                        remote_error(
+                            TalonRemoteErrorKind::Protocol,
+                            format!("SQL row is not an array: {row}"),
+                        )
+                    })?
+                    .iter()
+                    .map(talon_value_from_json)
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Execute parameterized SQL remotely.
+    ///
+    /// The current server JSON command accepts SQL text only, so the client
+    /// renders `?` placeholders into SQL literals before sending the command.
+    /// This keeps the public client surface aligned with embedded
+    /// `run_sql_param` until the server protocol grows native bind params.
+    pub fn run_sql_param(
+        &self,
+        sql: &str,
+        params: &[Value],
+    ) -> Result<Vec<Vec<Value>>, TalonError> {
+        if params.is_empty() {
+            return self.run_sql(sql);
+        }
+        let rendered = inline_sql_params(sql, params)?;
+        self.run_sql(&rendered)
+    }
+
+    /// Get a remote KV client surface.
+    pub fn kv(&self) -> Result<RemoteKvEngine<'_>, TalonError> {
+        Ok(RemoteKvEngine { client: self })
+    }
+
+    /// Get a remote KV read client surface.
+    pub fn kv_read(&self) -> Result<RemoteKvEngine<'_>, TalonError> {
+        Ok(RemoteKvEngine { client: self })
+    }
+
+    /// Get a remote MQ client surface.
+    pub fn mq(&self) -> Result<RemoteMqEngine<'_>, TalonError> {
+        Ok(RemoteMqEngine { client: self })
+    }
+
+    /// Get a remote MQ read client surface.
+    pub fn mq_read(&self) -> Result<RemoteMqEngine<'_>, TalonError> {
+        Ok(RemoteMqEngine { client: self })
+    }
+
+    /// Execute a raw JSON command against the remote server.
+    pub fn exec_cmd_json(&self, cmd: &serde_json::Value) -> Result<serde_json::Value, TalonError> {
+        let payload = serde_json::to_vec(cmd)
+            .map_err(|e| remote_error(TalonRemoteErrorKind::Protocol, format!("encode: {e}")))?;
+        let mut stream = self
+            .stream
+            .lock()
+            .map_err(|_| remote_error(TalonRemoteErrorKind::Io, "connection lock poisoned"))?;
+        write_remote_frame(&mut stream, &payload)?;
+        let frame = read_remote_frame(&mut stream)?;
+        serde_json::from_slice(&frame)
+            .map_err(|e| remote_error(TalonRemoteErrorKind::Protocol, format!("decode: {e}")))
+    }
+
+    fn exec_cmd(&self, cmd: &serde_json::Value) -> Result<(), TalonError> {
+        let resp = self.exec_cmd_json(cmd)?;
+        remote_response_data(&resp)?;
+        Ok(())
+    }
+}
+
+/// Remote KV engine wrapper.
+pub struct RemoteKvEngine<'a> {
+    client: &'a TalonRemoteClient,
+}
+
+impl<'a> RemoteKvEngine<'a> {
+    /// Read a key from remote KV.
+    pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, TalonError> {
+        let key = remote_utf8("KV key", key)?;
+        let cmd = serde_json::json!({
+            "module": "kv",
+            "action": "get",
+            "params": { "key": key }
+        });
+        let resp = self.client.exec_cmd_json(&cmd)?;
+        let data = remote_response_data(&resp)?.ok_or_else(|| {
+            remote_error(
+                TalonRemoteErrorKind::Protocol,
+                format!("KV get response missing data: {resp}"),
+            )
+        })?;
+        match data.get("value") {
+            Some(v) if v.is_null() => Ok(None),
+            Some(v) => v
+                .as_str()
+                .map(|s| Some(s.as_bytes().to_vec()))
+                .ok_or_else(|| {
+                    remote_error(
+                        TalonRemoteErrorKind::Protocol,
+                        format!("KV get value is not a string/null: {resp}"),
+                    )
+                }),
+            None => Err(remote_error(
+                TalonRemoteErrorKind::Protocol,
+                format!("KV get response missing value: {resp}"),
+            )),
+        }
+    }
+
+    /// Write a remote KV value. The server JSON protocol stores string payloads.
+    pub fn set(&self, key: &[u8], value: &[u8], ttl_secs: Option<u64>) -> Result<(), TalonError> {
+        let key = remote_utf8("KV key", key)?;
+        let value = remote_utf8("KV value", value)?;
+        let mut params = serde_json::json!({ "key": key, "value": value });
+        if let Some(ttl) = ttl_secs {
+            params["ttl"] = serde_json::json!(ttl);
+        }
+        let cmd = serde_json::json!({
+            "module": "kv",
+            "action": "set",
+            "params": params
+        });
+        self.client.exec_cmd(&cmd)
+    }
+
+    /// Delete a remote KV key.
+    pub fn del(&self, key: &[u8]) -> Result<(), TalonError> {
+        let key = remote_utf8("KV key", key)?;
+        let cmd = serde_json::json!({
+            "module": "kv",
+            "action": "del",
+            "params": { "key": key }
+        });
+        self.client.exec_cmd(&cmd)
+    }
+}
+
+/// Remote MQ engine wrapper.
+pub struct RemoteMqEngine<'a> {
+    client: &'a TalonRemoteClient,
+}
+
+impl<'a> RemoteMqEngine<'a> {
+    /// Create a remote topic.
+    pub fn create_topic(&self, topic: &str, max_len: u64) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq",
+            "action": "create",
+            "params": { "topic": topic, "max_len": max_len }
+        });
+        self.client.exec_cmd(&cmd)
+    }
+
+    /// Publish a message to a remote topic.
+    pub fn publish(&self, topic: &str, payload: &[u8]) -> Result<u64, TalonError> {
+        let payload_str = String::from_utf8_lossy(payload);
+        let cmd = serde_json::json!({
+            "module": "mq",
+            "action": "publish",
+            "params": { "topic": topic, "payload": payload_str }
+        });
+        let resp = self.client.exec_cmd_json(&cmd)?;
+        let data = remote_response_data(&resp)?;
+        Ok(data
+            .and_then(|d| d.get("id"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+
+    /// Publish a delayed message to a remote topic.
+    pub fn publish_delayed(
+        &self,
+        topic: &str,
+        payload: &[u8],
+        delay_ms: u64,
+    ) -> Result<u64, TalonError> {
+        let payload_str = String::from_utf8_lossy(payload);
+        let cmd = serde_json::json!({
+            "module": "mq",
+            "action": "publish",
+            "params": { "topic": topic, "payload": payload_str, "delay_ms": delay_ms }
+        });
+        let resp = self.client.exec_cmd_json(&cmd)?;
+        let data = remote_response_data(&resp)?;
+        Ok(data
+            .and_then(|d| d.get("id"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0))
+    }
+
+    /// Acknowledge a remote MQ message.
+    pub fn ack(
+        &self,
+        topic: &str,
+        group: &str,
+        consumer: &str,
+        message_id: u64,
+    ) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq",
+            "action": "ack",
+            "params": {
+                "topic": topic,
+                "group": group,
+                "consumer": consumer,
+                "message_id": message_id
+            }
+        });
+        self.client.exec_cmd(&cmd)
+    }
+
+    /// Poll remote MQ messages.
+    pub fn poll(
+        &self,
+        topic: &str,
+        group: &str,
+        consumer: &str,
+        count: usize,
+    ) -> Result<Vec<MqMessage>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq",
+            "action": "poll",
+            "params": {
+                "topic": topic,
+                "group": group,
+                "consumer": consumer,
+                "count": count
+            }
+        });
+        let resp = self.client.exec_cmd_json(&cmd)?;
+        let messages = remote_response_data(&resp)?
+            .and_then(|d| d.get("messages"))
+            .and_then(|m| m.as_array())
+            .cloned()
+            .unwrap_or_default();
+        Ok(messages
+            .into_iter()
+            .map(|m| MqMessage {
+                id: m.get("id").and_then(|v| v.as_u64()).unwrap_or(0),
+                payload: m
+                    .get("payload")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .as_bytes()
+                    .to_vec(),
+                timestamp: m.get("timestamp").and_then(|v| v.as_u64()).unwrap_or(0),
+            })
+            .collect())
+    }
+
+    /// Subscribe a consumer group to a remote topic.
+    pub fn subscribe(&self, topic: &str, group: &str) -> Result<(), TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq",
+            "action": "subscribe",
+            "params": { "topic": topic, "group": group }
+        });
+        self.client.exec_cmd(&cmd)
+    }
+
+    /// List remote topics.
+    pub fn list_topics(&self) -> Result<Vec<String>, TalonError> {
+        let cmd = serde_json::json!({
+            "module": "mq",
+            "action": "topics",
+            "params": {}
+        });
+        let resp = self.client.exec_cmd_json(&cmd)?;
+        Ok(remote_response_data(&resp)?
+            .and_then(|d| d.get("topics"))
+            .and_then(|t| t.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+}
+
+fn parse_talon_remote_endpoint(
+    endpoint: &str,
+    default_timeout: Duration,
+) -> Result<RemoteEndpoint, TalonError> {
+    let endpoint = endpoint.trim();
+    let rest = endpoint.strip_prefix("talon://").ok_or_else(|| {
+        remote_error(
+            TalonRemoteErrorKind::InvalidEndpoint,
+            "endpoint must start with talon://",
+        )
+    })?;
+    let (authority, query) = rest.split_once('?').unwrap_or((rest, ""));
+    if authority.is_empty() || authority.contains('/') {
+        return Err(remote_error(
+            TalonRemoteErrorKind::InvalidEndpoint,
+            "endpoint must be talon://host:port",
+        ));
+    }
+
+    let (userinfo, addr) = authority
+        .rsplit_once('@')
+        .map(|(u, a)| (Some(u), a))
+        .unwrap_or((None, authority));
+    if addr.is_empty() || !addr.contains(':') {
+        return Err(remote_error(
+            TalonRemoteErrorKind::InvalidEndpoint,
+            "endpoint must include host:port",
+        ));
+    }
+
+    let mut auth_token = userinfo.and_then(|u| {
+        let token = u.split_once(':').map(|(_, password)| password).unwrap_or(u);
+        (!token.is_empty()).then(|| token.to_string())
+    });
+    let mut timeout = default_timeout;
+    if !query.is_empty() {
+        for pair in query.split('&').filter(|p| !p.is_empty()) {
+            let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+            match key {
+                "auth" | "auth_token" | "token" => {
+                    if !value.is_empty() {
+                        auth_token = Some(value.to_string());
+                    }
+                }
+                "timeout_ms" => {
+                    let millis = value.parse::<u64>().map_err(|e| {
+                        remote_error(
+                            TalonRemoteErrorKind::InvalidEndpoint,
+                            format!("invalid timeout_ms value: {e}"),
+                        )
+                    })?;
+                    timeout = Duration::from_millis(millis);
+                }
+                "timeout" | "timeout_secs" => {
+                    let secs = value.parse::<u64>().map_err(|e| {
+                        remote_error(
+                            TalonRemoteErrorKind::InvalidEndpoint,
+                            format!("invalid timeout value: {e}"),
+                        )
+                    })?;
+                    timeout = Duration::from_secs(secs);
+                }
+                "protocol" if value != "tcp" => {
+                    return Err(remote_error(
+                        TalonRemoteErrorKind::InvalidEndpoint,
+                        format!("unsupported protocol={value}; expected tcp"),
+                    ));
+                }
+                "tls" if value == "true" || value == "1" => {
+                    return Err(remote_error(
+                        TalonRemoteErrorKind::InvalidEndpoint,
+                        "TLS talon:// endpoints are not supported by this TCP client",
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    if timeout.is_zero() {
+        return Err(remote_error(
+            TalonRemoteErrorKind::InvalidEndpoint,
+            "timeout must be greater than zero",
+        ));
+    }
+
+    Ok(RemoteEndpoint {
+        endpoint: endpoint.to_string(),
+        addr: addr.to_string(),
+        auth_token,
+        timeout,
+    })
+}
+
+fn connect_remote_stream(endpoint: &RemoteEndpoint) -> Result<TcpStream, TalonError> {
+    let addrs = endpoint.addr.to_socket_addrs().map_err(|e| {
+        remote_error(
+            TalonRemoteErrorKind::Connect,
+            format!("resolve {}: {e}", endpoint.addr),
+        )
+    })?;
+    let mut last_err: Option<std::io::Error> = None;
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, endpoint.timeout) {
+            Ok(stream) => {
+                stream
+                    .set_read_timeout(Some(endpoint.timeout))
+                    .map_err(|e| {
+                        remote_io_error(TalonRemoteErrorKind::Io, "set read timeout", e)
+                    })?;
+                stream
+                    .set_write_timeout(Some(endpoint.timeout))
+                    .map_err(|e| {
+                        remote_io_error(TalonRemoteErrorKind::Io, "set write timeout", e)
+                    })?;
+                return Ok(stream);
+            }
+            Err(e) => last_err = Some(e),
+        }
+    }
+    match last_err {
+        Some(e) => Err(remote_io_error(
+            TalonRemoteErrorKind::Connect,
+            &format!("connect {}", endpoint.addr),
+            e,
+        )),
+        None => Err(remote_error(
+            TalonRemoteErrorKind::Connect,
+            format!("no socket addresses resolved for {}", endpoint.addr),
+        )),
+    }
+}
+
+fn authenticate_remote_stream(stream: &mut TcpStream, token: &str) -> Result<(), TalonError> {
+    let payload = serde_json::to_vec(&serde_json::json!({ "auth": token }))
+        .map_err(|e| remote_error(TalonRemoteErrorKind::Protocol, format!("auth encode: {e}")))?;
+    write_remote_frame(stream, &payload)?;
+    let frame = read_remote_frame(stream)?;
+    let resp: serde_json::Value = serde_json::from_slice(&frame).map_err(|e| {
+        remote_error(
+            TalonRemoteErrorKind::Handshake,
+            format!("auth response decode: {e}"),
+        )
+    })?;
+    match resp.get("ok").and_then(|v| v.as_bool()) {
+        Some(true) => Ok(()),
+        Some(false) => Err(remote_error(
+            TalonRemoteErrorKind::Auth,
+            resp.get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("auth failed"),
+        )),
+        None => Err(remote_error(
+            TalonRemoteErrorKind::Handshake,
+            format!("auth response missing ok: {resp}"),
+        )),
+    }
+}
+
+fn write_remote_frame(stream: &mut TcpStream, data: &[u8]) -> Result<(), TalonError> {
+    if data.len() > MAX_REMOTE_FRAME_SIZE as usize {
+        return Err(remote_error(
+            TalonRemoteErrorKind::Protocol,
+            format!(
+                "frame size {} exceeds max {}",
+                data.len(),
+                MAX_REMOTE_FRAME_SIZE
+            ),
+        ));
+    }
+    let len = data.len() as u32;
+    stream
+        .write_all(&len.to_be_bytes())
+        .map_err(|e| remote_io_error(TalonRemoteErrorKind::Io, "write frame length", e))?;
+    stream
+        .write_all(data)
+        .map_err(|e| remote_io_error(TalonRemoteErrorKind::Io, "write frame payload", e))?;
+    stream
+        .flush()
+        .map_err(|e| remote_io_error(TalonRemoteErrorKind::Io, "flush frame", e))?;
+    Ok(())
+}
+
+fn read_remote_frame(stream: &mut TcpStream) -> Result<Vec<u8>, TalonError> {
+    let mut len_buf = [0u8; 4];
+    stream
+        .read_exact(&mut len_buf)
+        .map_err(|e| remote_io_error(TalonRemoteErrorKind::Handshake, "read frame length", e))?;
+    let len = u32::from_be_bytes(len_buf);
+    if len > MAX_REMOTE_FRAME_SIZE {
+        return Err(remote_error(
+            TalonRemoteErrorKind::Protocol,
+            format!("frame size {len} exceeds max {MAX_REMOTE_FRAME_SIZE}"),
+        ));
+    }
+    let mut buf = vec![0u8; len as usize];
+    stream
+        .read_exact(&mut buf)
+        .map_err(|e| remote_io_error(TalonRemoteErrorKind::Protocol, "read frame payload", e))?;
+    Ok(buf)
+}
+
+fn remote_response_data(
+    resp: &serde_json::Value,
+) -> Result<Option<&serde_json::Value>, TalonError> {
+    match resp.get("ok").and_then(|v| v.as_bool()) {
+        Some(true) => Ok(resp.get("data")),
+        Some(false) => {
+            let msg = resp
+                .get("error")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown remote server error");
+            let kind = if msg == "auth failed" {
+                TalonRemoteErrorKind::Auth
+            } else {
+                TalonRemoteErrorKind::Server
+            };
+            Err(remote_error(kind, msg))
+        }
+        None => Err(remote_error(
+            TalonRemoteErrorKind::Handshake,
+            format!("response missing ok boolean: {resp}"),
+        )),
+    }
+}
+
+fn remote_utf8<'a>(field: &str, bytes: &'a [u8]) -> Result<&'a str, TalonError> {
+    std::str::from_utf8(bytes).map_err(|e| {
+        remote_error(
+            TalonRemoteErrorKind::Protocol,
+            format!("{field} must be valid UTF-8 for the current JSON TCP protocol: {e}"),
+        )
+    })
+}
+
+fn talon_value_from_json(value: &serde_json::Value) -> Result<Value, TalonError> {
+    if let Ok(v) = serde_json::from_value::<Value>(value.clone()) {
+        return Ok(v);
+    }
+    match value {
+        serde_json::Value::Null => Ok(Value::Null),
+        serde_json::Value::Bool(v) => Ok(Value::Boolean(*v)),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                Ok(Value::Integer(i))
+            } else if let Some(f) = n.as_f64() {
+                Ok(Value::Float(f))
+            } else {
+                Err(remote_error(
+                    TalonRemoteErrorKind::Protocol,
+                    format!("unsupported numeric value: {value}"),
+                ))
+            }
+        }
+        serde_json::Value::String(s) => Ok(Value::Text(s.clone())),
+        other => Ok(Value::Jsonb(other.clone())),
+    }
+}
+
+fn inline_sql_params(sql: &str, params: &[Value]) -> Result<String, TalonError> {
+    let mut rendered = String::with_capacity(sql.len() + params.len() * 8);
+    let mut param_idx = 0usize;
+    let mut in_single_quote = false;
+    let mut chars = sql.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\'' {
+            rendered.push(ch);
+            if in_single_quote && chars.peek() == Some(&'\'') {
+                rendered.push(chars.next().unwrap());
+            } else {
+                in_single_quote = !in_single_quote;
+            }
+            continue;
+        }
+        if ch == '?' && !in_single_quote {
+            let param = params.get(param_idx).ok_or_else(|| {
+                remote_error(
+                    TalonRemoteErrorKind::Protocol,
+                    "not enough SQL parameters for placeholders",
+                )
+            })?;
+            rendered.push_str(&sql_literal(param)?);
+            param_idx += 1;
+        } else {
+            rendered.push(ch);
+        }
+    }
+    if param_idx != params.len() {
+        return Err(remote_error(
+            TalonRemoteErrorKind::Protocol,
+            format!(
+                "too many SQL parameters: consumed {}, provided {}",
+                param_idx,
+                params.len()
+            ),
+        ));
+    }
+    Ok(rendered)
+}
+
+fn sql_literal(value: &Value) -> Result<String, TalonError> {
+    match value {
+        Value::Null => Ok("NULL".into()),
+        Value::Integer(v) | Value::Timestamp(v) => Ok(v.to_string()),
+        Value::Float(v) if v.is_finite() => Ok(v.to_string()),
+        Value::Float(_) => Err(remote_error(
+            TalonRemoteErrorKind::Protocol,
+            "non-finite floats cannot be rendered as SQL literals",
+        )),
+        Value::Text(v) => Ok(format!("'{}'", v.replace('\'', "''"))),
+        Value::Blob(v) => Ok(format!(
+            "X'{}'",
+            v.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        )),
+        Value::Boolean(v) => Ok(if *v { "TRUE".into() } else { "FALSE".into() }),
+        Value::Jsonb(v) => Ok(format!("'{}'", v.to_string().replace('\'', "''"))),
+        Value::Vector(v) => Ok(format!(
+            "'{}'",
+            serde_json::to_string(v)
+                .map_err(|e| remote_error(TalonRemoteErrorKind::Protocol, e.to_string()))?
+                .replace('\'', "''")
+        )),
+        Value::GeoPoint(lat, lon) => Ok(format!("'{lat},{lon}'")),
     }
 }
 
@@ -1359,12 +2115,14 @@ impl Talon {
         use std::sync::atomic::{AtomicU64, Ordering};
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "talon_anon_{}_{n}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("talon_anon_{}_{n}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         Self::open(dir.to_string_lossy().as_ref())
+    }
+
+    /// Connect to a remote Talon server endpoint, e.g. `talon://127.0.0.1:7720`.
+    pub fn connect_remote(endpoint: &str) -> Result<TalonRemoteClient, TalonError> {
+        TalonRemoteClient::connect(endpoint)
     }
 
     // ── SQL 执行（二进制 FFI，零 JSON 开销）──
@@ -1897,6 +2655,120 @@ fn decode_value(data: &[u8], pos: usize) -> Result<(Value, usize), TalonError> {
             Ok((Value::GeoPoint(lat, lon), 17))
         }
         _ => Err(TalonError(format!("unknown binary type tag: {tag}"))),
+    }
+}
+
+#[cfg(test)]
+mod remote_tests {
+    use super::*;
+    use std::net::TcpListener;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    fn reserve_tcp_addr() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        drop(listener);
+        addr
+    }
+
+    fn connect_with_retry(endpoint: &str) -> Result<TalonRemoteClient, TalonError> {
+        let deadline = Instant::now() + Duration::from_secs(3);
+        let mut last_err = None;
+        while Instant::now() < deadline {
+            match TalonRemoteClient::connect_with_timeout(endpoint, Duration::from_millis(250)) {
+                Ok(client) => return Ok(client),
+                Err(err) => {
+                    last_err = Some(err);
+                    thread::sleep(Duration::from_millis(25));
+                }
+            }
+        }
+        Err(last_err.unwrap_or_else(|| TalonError("remote connect retry exhausted".into())))
+    }
+
+    #[test]
+    fn remote_endpoint_requires_talon_scheme() {
+        let err = TalonRemoteClient::connect("http://127.0.0.1:7720").unwrap_err();
+        assert!(err.0.contains("remote invalid-endpoint"));
+    }
+
+    #[test]
+    fn remote_auth_failure_is_classified() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = read_remote_frame(&mut stream).unwrap();
+            write_remote_frame(&mut stream, br#"{"ok":false,"error":"auth failed"}"#).unwrap();
+        });
+
+        let err =
+            TalonRemoteClient::connect(&format!("talon://{addr}?auth_token=bad")).unwrap_err();
+        assert!(err.0.contains("remote auth: auth failed"));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn remote_client_sql_kv_mq_roundtrip() {
+        let db = Talon::open_anon().unwrap();
+        let addr = reserve_tcp_addr();
+        db.start_server(&addr).unwrap();
+
+        let client = connect_with_retry(&format!("talon://{addr}")).unwrap();
+
+        client
+            .run_sql("CREATE TABLE remote_roundtrip (id INT, name TEXT)")
+            .unwrap();
+        client
+            .run_sql("INSERT INTO remote_roundtrip VALUES (1, 'alice')")
+            .unwrap();
+        client
+            .run_sql_param(
+                "INSERT INTO remote_roundtrip VALUES (?, ?)",
+                &[Value::Integer(2), Value::Text("bob".into())],
+            )
+            .unwrap();
+        let rows = client
+            .run_sql("SELECT name FROM remote_roundtrip WHERE id = 2")
+            .unwrap();
+        assert_eq!(rows, vec![vec![Value::Text("bob".into())]]);
+
+        let kv = client.kv().unwrap();
+        kv.set(b"remote:key", b"remote-value", None).unwrap();
+        assert_eq!(
+            kv.get(b"remote:key").unwrap(),
+            Some(b"remote-value".to_vec())
+        );
+        kv.del(b"remote:key").unwrap();
+        assert_eq!(kv.get(b"remote:key").unwrap(), None);
+
+        let mq = client.mq().unwrap();
+        mq.create_topic("remote-topic", 100).unwrap();
+        mq.subscribe("remote-topic", "remote-group").unwrap();
+        let msg_id = mq.publish("remote-topic", b"remote-message").unwrap();
+        assert!(msg_id > 0);
+        let messages = mq
+            .poll("remote-topic", "remote-group", "remote-consumer", 1)
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].payload, b"remote-message");
+        mq.ack(
+            "remote-topic",
+            "remote-group",
+            "remote-consumer",
+            messages[0].id,
+        )
+        .unwrap();
+        assert!(mq
+            .list_topics()
+            .unwrap()
+            .contains(&"remote-topic".to_string()));
+
+        drop(client);
+        // The current FFI stop_server joins a blocking acceptor thread. Let the
+        // test process tear down the background server after proving roundtrip.
+        std::mem::forget(db);
     }
 }
 
