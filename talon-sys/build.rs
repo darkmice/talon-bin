@@ -8,12 +8,12 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::SystemTime;
 
 fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap();
     let target = env::var("TARGET").unwrap();
-    let profile = env::var("PROFILE").unwrap_or_else(|_| "debug".to_string());
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     // ── 优先使用本地库路径（开发环境）──
@@ -27,6 +27,7 @@ fn main() {
 
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=TALON_LIB_DIR");
+    println!("cargo:rerun-if-env-changed=TALON_RELEASE_DIR");
     println!("cargo:rerun-if-env-changed=TALON_SOURCE_ROOT");
 
     if let Some(local_dir) = validate_env_lib_dir(&target_os, lib_name) {
@@ -35,14 +36,7 @@ fn main() {
         return;
     }
 
-    if let Some(local_dir) = try_build_local_source(
-        &out_dir,
-        &target_os,
-        &target,
-        &profile,
-        has_evocore,
-        lib_name,
-    ) {
+    if let Some(local_dir) = try_build_local_source(&target_os, &target, has_evocore, lib_name) {
         emit_static_link(&target_os, &local_dir, lib_name);
         link_system_libs();
         return;
@@ -160,13 +154,12 @@ fn validate_env_lib_dir(target_os: &str, lib_name: &str) -> Option<PathBuf> {
 }
 
 fn try_build_local_source(
-    out_dir: &Path,
     target_os: &str,
     target: &str,
-    profile: &str,
     has_evocore: bool,
     link_lib_name: &str,
 ) -> Option<PathBuf> {
+    let local_source_profile = "release";
     let source_root = detect_source_root()?;
     let (bundle_dir_name, bundle_lib_name, dependency_dirs): (&str, &str, &[&str]) = if has_evocore
     {
@@ -197,6 +190,9 @@ fn try_build_local_source(
         return None;
     }
 
+    let staged_dir = talon_release_dir(&source_root, target, local_source_profile);
+    let staged_lib = staged_dir.join(required_lib_filename(target_os, link_lib_name));
+
     println!("cargo:rerun-if-changed={}", bundle_manifest.display());
     println!(
         "cargo:rerun-if-changed={}",
@@ -216,6 +212,16 @@ fn try_build_local_source(
         }
     }
 
+    if staged_lib.exists()
+        && !local_source_is_newer(&source_root, &bundle_dir, dependency_dirs, &staged_lib)
+    {
+        eprintln!(
+            "cargo:warning=Reusing cached Talon library ({link_lib_name}) from {}",
+            staged_lib.display()
+        );
+        return Some(staged_dir);
+    }
+
     let cargo = env::var("CARGO").unwrap_or_else(|_| "cargo".to_string());
     let mut command = Command::new(cargo);
     command
@@ -225,11 +231,9 @@ fn try_build_local_source(
         .arg("--lib")
         .arg("--target")
         .arg(target)
+        .arg("--release")
         .env_remove("TALON_LIB_DIR")
         .env("CARGO_TERM_COLOR", "never");
-    if profile == "release" {
-        command.arg("--release");
-    }
 
     let status = match command.status() {
         Ok(status) => status,
@@ -252,7 +256,7 @@ fn try_build_local_source(
     let produced_lib = bundle_dir
         .join("target")
         .join(target)
-        .join(profile)
+        .join(local_source_profile)
         .join(required_lib_filename(target_os, bundle_lib_name));
     if !produced_lib.exists() {
         eprintln!(
@@ -262,9 +266,7 @@ fn try_build_local_source(
         return None;
     }
 
-    let staged_dir = out_dir.join("talon-local-source");
     fs::create_dir_all(&staged_dir).unwrap();
-    let staged_lib = staged_dir.join(required_lib_filename(target_os, link_lib_name));
     fs::copy(&produced_lib, &staged_lib).unwrap_or_else(|err| {
         panic!(
             "Failed to stage local Talon library {} -> {}: {err}",
@@ -273,8 +275,9 @@ fn try_build_local_source(
         )
     });
     eprintln!(
-        "cargo:warning=Using local Talon source build ({link_lib_name}) from {}",
-        bundle_manifest.display()
+        "cargo:warning=Using local Talon source build ({link_lib_name}) from {} -> {}",
+        bundle_manifest.display(),
+        staged_lib.display()
     );
     Some(staged_dir)
 }
@@ -293,6 +296,60 @@ fn detect_source_root() -> Option<PathBuf> {
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").ok()?);
     manifest_dir.parent().map(Path::to_path_buf)
+}
+
+fn talon_release_dir(source_root: &Path, target: &str, profile: &str) -> PathBuf {
+    if let Ok(path) = env::var("TALON_RELEASE_DIR") {
+        return PathBuf::from(path);
+    }
+    source_root.join("talon-release").join(target).join(profile)
+}
+
+fn local_source_is_newer(
+    source_root: &Path,
+    bundle_dir: &Path,
+    dependency_dirs: &[&str],
+    staged_lib: &Path,
+) -> bool {
+    let staged_mtime = match file_mtime(staged_lib) {
+        Some(mtime) => mtime,
+        None => return true,
+    };
+
+    let mut watch_roots = vec![bundle_dir.to_path_buf()];
+    if let Some(workspace_root) = source_root.parent() {
+        for dependency_dir in dependency_dirs {
+            let dep_path = workspace_root.join(dependency_dir);
+            if dep_path.exists() {
+                watch_roots.push(dep_path);
+            }
+        }
+    }
+
+    watch_roots
+        .into_iter()
+        .filter_map(|path| newest_mtime(&path))
+        .any(|mtime| mtime > staged_mtime)
+}
+
+fn newest_mtime(path: &Path) -> Option<SystemTime> {
+    let mut newest = file_mtime(path);
+    if path.is_dir() {
+        let entries = fs::read_dir(path).ok()?;
+        for entry in entries.flatten() {
+            if let Some(child) = newest_mtime(&entry.path()) {
+                newest = Some(match newest {
+                    Some(current) if current >= child => current,
+                    _ => child,
+                });
+            }
+        }
+    }
+    newest
+}
+
+fn file_mtime(path: &Path) -> Option<SystemTime> {
+    fs::metadata(path).ok()?.modified().ok()
 }
 
 fn required_lib_filename(target_os: &str, lib_name: &str) -> String {

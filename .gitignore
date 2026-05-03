@@ -14,6 +14,7 @@ Thumbs.db
 # Rust
 # ===========================
 target/
+talon-release/
 Cargo.lock
 
 # ===========================
