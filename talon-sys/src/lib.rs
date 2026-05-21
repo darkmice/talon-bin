@@ -938,6 +938,12 @@ mod raw_ffi {
         pub fn talon_free_string(ptr: *mut c_char);
         pub fn talon_free_bytes(ptr: *mut u8, len: usize);
 
+        // ── FFI 错误回吐(talon-core v0.1.1+)──
+        // 取当前线程上次 FFI 失败的真实错误消息(借用指针,无需释放;
+        // 下次 FFI 调用或线程退出后失效)。无错误时返回 null。
+        pub fn talon_last_error() -> *const c_char;
+        pub fn talon_clear_last_error();
+
         // ── Server 管理 ──
         pub fn talon_start_server(handle: *const TalonHandle, tcp_addr: *const c_char) -> c_int;
         pub fn talon_stop_server(handle: *const TalonHandle) -> c_int;
@@ -967,6 +973,36 @@ mod raw_ffi {
             out_data: *mut *mut u8,
             out_len: *mut usize,
         ) -> c_int;
+    }
+}
+
+/// 取当前线程 talon-core FFI 上次失败的真实错误消息。
+///
+/// 对应 talon-core v0.1.1+ 的 `talon_last_error()` 出参。无错误或运行的引擎
+/// 旧于该版本时返回 None,调用方应回落到一个泛化的 "FFI failed" 错误。
+fn last_ffi_error() -> Option<String> {
+    let p = unsafe { raw_ffi::talon_last_error() };
+    if p.is_null() {
+        return None;
+    }
+    let s = unsafe { CStr::from_ptr(p) }
+        .to_string_lossy()
+        .into_owned();
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// 把 FFI 失败包装成带详细原因的 `TalonError`。
+///
+/// `op` 是调用方上下文(例如 "run_sql"),talon-core 已经把 SQL 预览拼进了
+/// 错误消息,这里只需追加调用方上下文便于上层 grep。
+fn ffi_error(op: &str) -> TalonError {
+    match last_ffi_error() {
+        Some(detail) => TalonError(format!("{op} FFI failed: {detail}")),
+        None => TalonError(format!("{op} FFI failed")),
     }
 }
 
@@ -2138,7 +2174,7 @@ impl Talon {
             raw_ffi::talon_run_sql_bin(self.handle, c_sql.as_ptr(), &mut out_data, &mut out_len)
         };
         if rc != 0 {
-            return Err(TalonError("run_sql FFI failed".into()));
+            return Err(ffi_error("run_sql"));
         }
         if out_data.is_null() || out_len == 0 {
             return Ok(vec![]);
@@ -2172,7 +2208,7 @@ impl Talon {
             )
         };
         if rc != 0 {
-            return Err(TalonError("run_sql_param FFI failed".into()));
+            return Err(ffi_error("run_sql_param"));
         }
         if out_data.is_null() || out_len == 0 {
             return Ok(vec![]);
@@ -2768,6 +2804,27 @@ mod remote_tests {
         drop(client);
         // The current FFI stop_server joins a blocking acceptor thread. Let the
         // test process tear down the background server after proving roundtrip.
+        std::mem::forget(db);
+    }
+
+    /// talon-core v0.1.1 起,FFI 失败的真实错误消息会通过 thread_local 暴露;
+    /// talon-sys 必须把它折回给上层(TalonError),否则上层只能看到笼统的
+    /// "run_sql FFI failed",无法定位 SQL parse 错误。
+    #[test]
+    fn run_sql_failure_surfaces_real_error_message() {
+        let db = Talon::open_anon().unwrap();
+        let err = db
+            .run_sql("CREATE TABLE bogus (col NOT_A_REAL_TYPE)")
+            .expect_err("非法 SQL 应当失败");
+        let msg = err.0;
+        assert!(
+            msg.starts_with("run_sql FFI failed: "),
+            "TalonError 必须保留 `run_sql FFI failed` 前缀以便 grep,实际: {msg}"
+        );
+        assert!(
+            msg.contains("NOT_A_REAL_TYPE") || msg.contains("unknown type"),
+            "TalonError 必须回吐 parser 的真实失败原因,实际: {msg}"
+        );
         std::mem::forget(db);
     }
 }
