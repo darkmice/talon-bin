@@ -34,6 +34,10 @@ on:
         description: 'Talon EvoCore git ref (tag/branch/sha)'
         required: true
         default: 'main'
+      talon_session_ref:
+        description: 'Talon Session git ref (tag/branch/sha)'
+        required: true
+        default: 'main'
       release_tag:
         description: 'Release tag name (e.g. v0.1.17)'
         required: true
@@ -48,6 +52,7 @@ env:
   TRACE_REF: ${{ inputs.talon_trace_ref || 'main' }}
   SANDBOX_REF: ${{ inputs.talon_sandbox_ref || 'main' }}
   EVOCORE_REF: ${{ inputs.talon_evocore_ref || 'main' }}
+  SESSION_REF: ${{ inputs.talon_session_ref || 'main' }}
 
 permissions:
   contents: write
@@ -187,6 +192,14 @@ jobs:
           ref: ${{ env.EVOCORE_REF }}
           token: ${{ secrets.TALON_AI_TOKEN }}
           path: talon-evo-core
+
+      - name: Checkout Talon Session (private)
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-session
+          ref: ${{ env.SESSION_REF }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-session
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
