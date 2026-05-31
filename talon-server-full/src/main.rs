@@ -235,6 +235,7 @@ fn start_replication(
                 oplog,
                 db.store().clone(),
                 Arc::clone(&stop),
+                db.epoch_handle(),
             )
             .with_replicas(db.replica_infos_arc());
             println!("  复制: ReplSender 监听 {}", config.replication_addr);
