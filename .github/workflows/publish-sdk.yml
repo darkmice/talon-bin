@@ -21,20 +21,31 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       version: ${{ steps.ver.outputs.VERSION }}
+      valid: ${{ steps.ver.outputs.VALID }}
     steps:
       - name: Extract version
         id: ver
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+            VERSION="${{ github.event.inputs.version }}"
           else
-            # Extract version from the release tag created by build-bundle
+            # Extract version from the release tag created by build-bundle.
+            # 注意：build 若由 workflow_dispatch 从 main 触发，head_branch 是 "main"
+            # 而非 tag —— 校验格式，不合法则跳过发布（此前 VERSION=main 炸全部 job）。
             TAG="${{ github.event.workflow_run.head_branch }}"
-            echo "VERSION=${TAG#v}" >> $GITHUB_OUTPUT
+            VERSION="${TAG#v}"
+          fi
+          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          if echo "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "VALID=true" >> $GITHUB_OUTPUT
+          else
+            echo "VALID=false" >> $GITHUB_OUTPUT
+            echo "::warning::版本 '${VERSION}' 非 X.Y.Z 格式（构建可能由 main dispatch 触发），跳过 SDK 发布"
           fi
 
   publish-python:
     needs: check-trigger
+    if: ${{ needs.check-trigger.outputs.valid == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout talon-sdk
@@ -81,6 +92,7 @@ jobs:
 
   publish-nodejs:
     needs: check-trigger
+    if: ${{ needs.check-trigger.outputs.valid == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout talon-sdk
@@ -109,6 +121,7 @@ jobs:
 
   publish-nuget:
     needs: check-trigger
+    if: ${{ needs.check-trigger.outputs.valid == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout talon-sdk
@@ -122,14 +135,14 @@ jobs:
         run: |
           VERSION="${{ needs.check-trigger.outputs.version }}"
           cd dotnet/Talon
-          for pair in "talon-macos-arm64:osx-arm64:libtalon.dylib" \
-                      "talon-macos-amd64:osx-x64:libtalon.dylib" \
-                      "talon-linux-amd64:linux-x64:libtalon.so" \
-                      "talon-linux-arm64:linux-arm64:libtalon.so" \
-                      "talon-windows-amd64:win-x64:talon.dll" \
-                      "talon-windows-arm64:win-arm64:talon.dll" \
-                      "talon-linux-loongarch64:linux-loongarch64:libtalon.so" \
-                      "talon-linux-riscv64:linux-riscv64:libtalon.so"; do
+          for pair in "macos-arm64:osx-arm64:libtalon.dylib" \
+                      "macos-amd64:osx-x64:libtalon.dylib" \
+                      "linux-amd64:linux-x64:libtalon.so" \
+                      "linux-arm64:linux-arm64:libtalon.so" \
+                      "windows-amd64:win-x64:talon.dll" \
+                      "windows-arm64:win-arm64:talon.dll" \
+                      "linux-loongarch64:linux-loongarch64:libtalon.so" \
+                      "linux-riscv64:linux-riscv64:libtalon.so"; do
             NAME="${pair%%:*}"
             REST="${pair#*:}"
             RID="${REST%%:*}"
@@ -161,6 +174,7 @@ jobs:
 
   publish-java:
     needs: check-trigger
+    if: ${{ needs.check-trigger.outputs.valid == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout talon-sdk
@@ -174,14 +188,14 @@ jobs:
         run: |
           VERSION="${{ needs.check-trigger.outputs.version }}"
           cd java
-          for pair in "talon-macos-arm64:darwin/arm64:libtalon.dylib" \
-                      "talon-macos-amd64:darwin/amd64:libtalon.dylib" \
-                      "talon-linux-amd64:linux/amd64:libtalon.so" \
-                      "talon-linux-arm64:linux/arm64:libtalon.so" \
-                      "talon-windows-amd64:windows/amd64:talon.dll" \
-                      "talon-windows-arm64:windows/arm64:talon.dll" \
-                      "talon-linux-loongarch64:linux/loongarch64:libtalon.so" \
-                      "talon-linux-riscv64:linux/riscv64:libtalon.so"; do
+          for pair in "macos-arm64:darwin/arm64:libtalon.dylib" \
+                      "macos-amd64:darwin/amd64:libtalon.dylib" \
+                      "linux-amd64:linux/amd64:libtalon.so" \
+                      "linux-arm64:linux/arm64:libtalon.so" \
+                      "windows-amd64:windows/amd64:talon.dll" \
+                      "windows-arm64:windows/arm64:talon.dll" \
+                      "linux-loongarch64:linux/loongarch64:libtalon.so" \
+                      "linux-riscv64:linux/riscv64:libtalon.so"; do
             NAME="${pair%%:*}"
             REST="${pair#*:}"
             DIR="${REST%%:*}"
