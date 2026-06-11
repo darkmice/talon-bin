@@ -184,9 +184,11 @@ fn main() {
     #[cfg(feature = "pgwire-server")]
     let pg_handle = pg_addr.map(|pa| {
         let db_pg = Arc::clone(&db);
+        // 与 HTTP/TCP 共用同一 auth token：pgwire 走 CleartextPassword 校验
+        let pg_token = config.auth_token.clone();
         std::thread::spawn(move || match tokio::runtime::Runtime::new() {
             Ok(rt) => rt.block_on(async move {
-                talon::server::pgwire::run_pgwire_server(db_pg, &pa).await;
+                talon::server::pgwire::run_pgwire_server(db_pg, &pa, pg_token).await;
             }),
             Err(e) => eprintln!("PgWire 运行时启动失败: {}", e),
         })
