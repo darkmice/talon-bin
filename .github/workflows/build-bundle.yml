@@ -38,6 +38,10 @@ on:
         description: 'Talon Session git ref (tag/branch/sha)'
         required: true
         default: 'main'
+      talon_block_ref:
+        description: 'Talon Block git ref (tag/branch/sha)'
+        required: true
+        default: 'main'
       release_tag:
         description: 'Release tag name (e.g. v0.1.17)'
         required: true
@@ -53,6 +57,7 @@ env:
   SANDBOX_REF: ${{ inputs.talon_sandbox_ref || 'main' }}
   EVOCORE_REF: ${{ inputs.talon_evocore_ref || 'main' }}
   SESSION_REF: ${{ inputs.talon_session_ref || 'main' }}
+  BLOCK_REF: ${{ inputs.talon_block_ref || 'main' }}
 
 permissions:
   contents: write
@@ -200,6 +205,14 @@ jobs:
           ref: ${{ env.SESSION_REF }}
           token: ${{ secrets.TALON_AI_TOKEN }}
           path: talon-session
+
+      - name: Checkout Talon Block (private)
+        uses: actions/checkout@v4
+        with:
+          repository: darkmice/talon-block
+          ref: ${{ env.BLOCK_REF }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-block
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
