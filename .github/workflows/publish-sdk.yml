@@ -85,7 +85,7 @@ jobs:
         run: |
           cd python
           pip install twine
-          twine upload dist/*
+          twine upload --skip-existing dist/*
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
@@ -151,7 +151,8 @@ jobs:
             curl -fSL --retry 3 \
               "https://github.com/darkmice/talon-bin/releases/download/v${VERSION}/libtalon-${NAME}.tar.gz" \
               -o /tmp/lib.tar.gz
-            tar -xzf /tmp/lib.tar.gz -C "runtimes/${RID}/native/"
+            # 只取动态库——tarball 里还有 133-200MB 的静态库,全解会撑爆 NuGet 250MB 包上限(413)
+            tar -xzf /tmp/lib.tar.gz -C "runtimes/${RID}/native/" "${LIB}"
             echo "✓ runtimes/${RID}/native/${LIB}"
           done
           find runtimes -type f | sort
@@ -204,7 +205,8 @@ jobs:
             curl -fSL --retry 3 \
               "https://github.com/darkmice/talon-bin/releases/download/v${VERSION}/libtalon-${NAME}.tar.gz" \
               -o /tmp/lib.tar.gz
-            tar -xzf /tmp/lib.tar.gz -C "src/main/resources/native/${DIR}/"
+            # 只取动态库,理由同 NuGet:全解 tarball 会把 JAR 撑到 GB 级
+            tar -xzf /tmp/lib.tar.gz -C "src/main/resources/native/${DIR}/" "${LIB}"
             echo "✓ native/${DIR}/${LIB}"
           done
 
@@ -212,7 +214,8 @@ jobs:
         with:
           java-version: '11'
           distribution: 'temurin'
-          server-id: ossrh
+          # OSSRH 2025-06 已停服,Maven Central 走 Central Portal(central-publishing-maven-plugin)
+          server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
           gpg-private-key: ${{ secrets.MAVEN_GPG_KEY }}
