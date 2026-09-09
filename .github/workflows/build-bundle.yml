@@ -223,6 +223,14 @@ jobs:
       - name: Install cross-compilation tools (apt)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
+          # The hosted Ubuntu image may expose a stale Google Chrome index whose
+          # checksum changes during the image lifetime. It is unrelated to the
+          # ARM cross compiler, so isolate that source rather than letting apt
+          # update fail before the build starts.
+          if [ -f /etc/apt/sources.list.d/google-chrome.list ]; then
+            sudo mv /etc/apt/sources.list.d/google-chrome.list /tmp/google-chrome.list.disabled
+          fi
+          sudo rm -rf /var/lib/apt/lists/*
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
