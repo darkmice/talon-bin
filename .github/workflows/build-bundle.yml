@@ -227,9 +227,10 @@ jobs:
           # checksum changes during the image lifetime. It is unrelated to the
           # ARM cross compiler, so isolate that source rather than letting apt
           # update fail before the build starts.
-          if [ -f /etc/apt/sources.list.d/google-chrome.list ]; then
-            sudo mv /etc/apt/sources.list.d/google-chrome.list /tmp/google-chrome.list.disabled
-          fi
+          for source_file in /etc/apt/sources.list.d/*chrome*; do
+            [ -f "$source_file" ] || continue
+            sudo mv "$source_file" "/tmp/$(basename "$source_file").disabled"
+          done
           sudo rm -rf /var/lib/apt/lists/*
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
