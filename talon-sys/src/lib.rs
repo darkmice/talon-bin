@@ -985,9 +985,7 @@ fn last_ffi_error() -> Option<String> {
     if p.is_null() {
         return None;
     }
-    let s = unsafe { CStr::from_ptr(p) }
-        .to_string_lossy()
-        .into_owned();
+    let s = unsafe { CStr::from_ptr(p) }.to_string_lossy().into_owned();
     if s.is_empty() {
         None
     } else {
