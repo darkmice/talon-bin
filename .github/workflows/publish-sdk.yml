@@ -1,11 +1,8 @@
-name: Publish SDK Packages
+name: Publish SDK Packages (Legacy, unsigned)
 
 on:
-  # Trigger after build-bundle completes
-  workflow_run:
-    workflows: ["Build Talon Modules"]
-    types: [completed]
-  # Manual trigger
+  # Publishing is manual. Unsigned legacy bundle builds must never publish SDKs
+  # automatically.
   workflow_dispatch:
     inputs:
       version:
@@ -18,28 +15,21 @@ permissions:
 jobs:
   check-trigger:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     outputs:
       version: ${{ steps.ver.outputs.VERSION }}
       valid: ${{ steps.ver.outputs.VALID }}
     steps:
       - name: Extract version
         id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            VERSION="${{ github.event.inputs.version }}"
-          else
-            # Extract version from the release tag created by build-bundle.
-            # 注意：build 若由 workflow_dispatch 从 main 触发，head_branch 是 "main"
-            # 而非 tag —— 校验格式，不合法则跳过发布（此前 VERSION=main 炸全部 job）。
-            TAG="${{ github.event.workflow_run.head_branch }}"
-            VERSION="${TAG#v}"
-          fi
-          echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+          VERSION="$INPUT_VERSION"
+          echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
           if echo "${VERSION}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "VALID=true" >> $GITHUB_OUTPUT
+            echo "VALID=true" >> "$GITHUB_OUTPUT"
           else
-            echo "VALID=false" >> $GITHUB_OUTPUT
+            echo "VALID=false" >> "$GITHUB_OUTPUT"
             echo "::warning::版本 '${VERSION}' 非 X.Y.Z 格式（构建可能由 main dispatch 触发），跳过 SDK 发布"
           fi
 
@@ -61,7 +51,7 @@ jobs:
 
       - name: Update version in pyproject.toml
         run: |
-          cd python
+          cd python || exit 1
           VERSION="${{ needs.check-trigger.outputs.version }}"
           # Update version in pyproject.toml (determines native lib download URL)
           sed -i "s/^version = \".*\"/version = \"${VERSION}\"/" pyproject.toml
@@ -70,7 +60,7 @@ jobs:
 
       - name: Build wheel and sdist
         run: |
-          cd python
+          cd python || exit 1
           pip install setuptools wheel build
           python -m build
           echo "--- Built artifacts ---"
@@ -83,7 +73,7 @@ jobs:
 
       - name: Publish to PyPI
         run: |
-          cd python
+          cd python || exit 1
           pip install twine
           twine upload --skip-existing dist/*
         env:
@@ -109,12 +99,12 @@ jobs:
 
       - name: Update version
         run: |
-          cd nodejs
+          cd nodejs || exit 1
           npm version ${{ needs.check-trigger.outputs.version }} --no-git-tag-version --allow-same-version
 
       - name: Publish to npm
         run: |
-          cd nodejs
+          cd nodejs || exit 1
           npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -134,7 +124,7 @@ jobs:
       - name: Download all native libs
         run: |
           VERSION="${{ needs.check-trigger.outputs.version }}"
-          cd dotnet/Talon
+          cd dotnet/Talon || exit 1
           for pair in "macos-arm64:osx-arm64:libtalon.dylib" \
                       "macos-amd64:osx-x64:libtalon.dylib" \
                       "linux-amd64:linux-x64:libtalon.so" \
@@ -163,13 +153,13 @@ jobs:
 
       - name: Pack NuGet
         run: |
-          cd dotnet/Talon
+          cd dotnet/Talon || exit 1
           dotnet pack -c Release -p:Version=${{ needs.check-trigger.outputs.version }} -o ../../nupkg
 
       - name: Publish to NuGet
         run: |
           dotnet nuget push nupkg/*.nupkg \
-            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --api-key "${{ secrets.NUGET_API_KEY }}" \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
 
@@ -188,7 +178,7 @@ jobs:
       - name: Download native libs to resources
         run: |
           VERSION="${{ needs.check-trigger.outputs.version }}"
-          cd java
+          cd java || exit 1
           for pair in "macos-arm64:darwin/arm64:libtalon.dylib" \
                       "macos-amd64:darwin/amd64:libtalon.dylib" \
                       "linux-amd64:linux/amd64:libtalon.so" \
@@ -223,7 +213,7 @@ jobs:
 
       - name: Set version and deploy
         run: |
-          cd java
+          cd java || exit 1
           mvn versions:set -DnewVersion=${{ needs.check-trigger.outputs.version }}
           mvn clean deploy -P release -DskipTests
         env:

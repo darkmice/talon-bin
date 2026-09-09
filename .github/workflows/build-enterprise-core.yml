@@ -1,0 +1,303 @@
+name: Build Enterprise Talon Core Supply Chain
+
+on:
+  pull_request:
+    paths:
+      - 'supply-chain/**'
+      - 'NOTICE'
+      - '.github/workflows/build-enterprise-core.yml'
+      - 'talon-sys/**'
+      - 'README.md'
+  push:
+    branches: [main]
+    paths:
+      - 'supply-chain/**'
+      - 'NOTICE'
+      - '.github/workflows/build-enterprise-core.yml'
+      - 'talon-sys/**'
+      - 'README.md'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: enterprise-core-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify-structure:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout talon-bin
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Validate gated development lock and tests
+        run: |
+          python3 -m pip install --disable-pip-version-check --no-input \
+            -r supply-chain/test-requirements.txt
+          python3 -m compileall -q supply-chain/tools supply-chain/tests
+          python3 supply-chain/tools/release.py validate-lock \
+            --lock supply-chain/release-lock.json --allow-gated
+          python3 -m unittest discover -s supply-chain/tests -v
+
+  build-signed-core:
+    if: github.event_name == 'workflow_dispatch'
+    needs: verify-structure
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            triple: x86_64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            static_library: libtalon.a
+            dynamic_library: libtalon.so
+          - platform: linux-arm64
+            triple: aarch64-unknown-linux-gnu
+            runner: ubuntu-24.04
+            static_library: libtalon.a
+            dynamic_library: libtalon.so
+          - platform: macos-amd64
+            triple: x86_64-apple-darwin
+            runner: macos-15-intel
+            static_library: libtalon.a
+            dynamic_library: libtalon.dylib
+          - platform: macos-arm64
+            triple: aarch64-apple-darwin
+            runner: macos-15
+            static_library: libtalon.a
+            dynamic_library: libtalon.dylib
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout talon-bin
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: talon-bin
+
+      - name: Read immutable release lock
+        id: lock
+        working-directory: talon-bin
+        shell: bash
+        run: |
+          python3 supply-chain/tools/release.py validate-lock \
+            --lock supply-chain/release-lock.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          import subprocess
+          lock = json.load(open("supply-chain/release-lock.json", encoding="utf-8"))
+          print("release_tag=" + lock["release_tag"])
+          print("talon_bin_commit=" + subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip())
+          print("core_commit=" + lock["core"]["commit"])
+          print("core_repository=" + lock["core"]["repository"])
+          print("core_tag=" + lock["core"]["tag"])
+          print("core_version=" + lock["core"]["cargo_version"])
+          print("abi_profile=" + lock["abi"]["profile"])
+          print("abi_version=" + str(lock["abi"]["version"]))
+          print("header_sha256=" + lock["abi"]["header_sha256"])
+          print("rust_toolchain=" + lock["build"]["rust_toolchain"])
+          print("signing_key_id=" + lock["signing"]["key_id"])
+          print("signing_key_sha256=" + lock["signing"]["public_key_sha256"])
+          target = next(t for t in lock["targets"] if t["platform"] == "${{ matrix.platform }}")
+          assert target["triple"] == "${{ matrix.triple }}"
+          assert target["runner"] == "${{ matrix.runner }}"
+          assert target["static_library"] == "${{ matrix.static_library }}"
+          assert target["dynamic_library"] == "${{ matrix.dynamic_library }}"
+          PY
+
+      - name: Select OpenSSL 3 on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
+
+      - name: Require release signing key
+        shell: bash
+        env:
+          TALON_RELEASE_SIGNING_KEY_PEM_B64: ${{ secrets.TALON_RELEASE_SIGNING_KEY_PEM_B64 }}
+        run: |
+          test -n "$TALON_RELEASE_SIGNING_KEY_PEM_B64" || {
+            echo "::error::TALON_RELEASE_SIGNING_KEY_PEM_B64 is required"
+            exit 1
+          }
+          umask 077
+          python3 - <<'PY'
+          import base64, os
+          from pathlib import Path
+          encoded = os.environ["TALON_RELEASE_SIGNING_KEY_PEM_B64"]
+          Path(os.environ["RUNNER_TEMP"], "talon-release-key.pem").write_bytes(base64.b64decode(encoded, validate=True))
+          PY
+          openssl pkey -in "$RUNNER_TEMP/talon-release-key.pem" -pubout > "$RUNNER_TEMP/talon-release-public.pem"
+
+      - name: Checkout exact Talon Core commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: darkmice/talon-core
+          ref: ${{ steps.lock.outputs.core_commit }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-core
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Install exact Rust toolchain
+        shell: bash
+        run: |
+          rustup toolchain install '${{ steps.lock.outputs.rust_toolchain }}' \
+            --profile minimal --target '${{ matrix.triple }}'
+          rustup override set '${{ steps.lock.outputs.rust_toolchain }}'
+
+      - name: Install Linux ARM64 linker
+        if: matrix.triple == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu qemu-user
+
+      - name: Build exact Core source
+        working-directory: talon-core
+        shell: bash
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          MACOSX_DEPLOYMENT_TARGET: '11.0'
+        run: |
+          test "$(git rev-parse HEAD)" = '${{ steps.lock.outputs.core_commit }}'
+          test -z "$(git status --porcelain=v1)"
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)"
+          export SOURCE_DATE_EPOCH
+          cargo build --locked --release --lib --target '${{ matrix.triple }}'
+          cargo metadata --locked --format-version 1 > "$RUNNER_TEMP/cargo-metadata.json"
+
+      - name: Stage required Core files without silent fallbacks
+        shell: bash
+        run: |
+          stage="$RUNNER_TEMP/talon-stage"
+          mkdir -p "$stage"
+          cp "talon-core/target/${{ matrix.triple }}/release/${{ matrix.static_library }}" "$stage/"
+          cp "talon-core/target/${{ matrix.triple }}/release/${{ matrix.dynamic_library }}" "$stage/"
+          cp talon-core/include/talon.h "$stage/talon.h"
+          cp talon-core/LICENSE "$stage/LICENSE.core"
+          cp talon-bin/NOTICE "$stage/NOTICE"
+          test -s "$stage/${{ matrix.static_library }}"
+          test -s "$stage/${{ matrix.dynamic_library }}"
+          test -s "$stage/talon.h"
+
+      - name: Verify required ABI symbols
+        shell: bash
+        run: |
+          python3 - <<'PY' > "$RUNNER_TEMP/required-symbols.txt"
+          import json
+          lock = json.load(open("talon-bin/supply-chain/release-lock.json", encoding="utf-8"))
+          print("\n".join(lock["runtime_attestation"]["required_symbols"]))
+          PY
+          if [[ '${{ runner.os }}' == 'Linux' ]]; then
+            nm --defined-only "$RUNNER_TEMP/talon-stage/${{ matrix.static_library }}" > "$RUNNER_TEMP/static-symbols.txt"
+            nm -D --defined-only "$RUNNER_TEMP/talon-stage/${{ matrix.dynamic_library }}" > "$RUNNER_TEMP/dynamic-symbols.txt"
+          else
+            nm -gU "$RUNNER_TEMP/talon-stage/${{ matrix.static_library }}" > "$RUNNER_TEMP/static-symbols.txt"
+            nm -gU "$RUNNER_TEMP/talon-stage/${{ matrix.dynamic_library }}" > "$RUNNER_TEMP/dynamic-symbols.txt"
+          fi
+          while IFS= read -r symbol; do
+            for table in "$RUNNER_TEMP/static-symbols.txt" "$RUNNER_TEMP/dynamic-symbols.txt"; do
+              grep -Eq "(^|[[:space:]_])${symbol}$" "$table" || {
+                echo "::error::missing defined ABI symbol ${symbol} in $(basename "$table")"
+                exit 1
+              }
+            done
+          done < "$RUNNER_TEMP/required-symbols.txt"
+
+      - name: Challenge candidate library self-attestation
+        shell: bash
+        run: |
+          probe="$RUNNER_TEMP/read-build-manifest"
+          source="talon-bin/supply-chain/tools/read-build-manifest.c"
+          library="$RUNNER_TEMP/talon-stage/${{ matrix.dynamic_library }}"
+          manifest="$RUNNER_TEMP/core-build-manifest.json"
+          if [[ '${{ matrix.triple }}' == 'aarch64-unknown-linux-gnu' ]]; then
+            aarch64-linux-gnu-gcc -std=c11 -Wall -Wextra -Werror "$source" -ldl -o "$probe"
+            QEMU_LD_PREFIX=/usr/aarch64-linux-gnu \
+              LD_LIBRARY_PATH="$RUNNER_TEMP/talon-stage" \
+              qemu-aarch64 "$probe" "$library" > "$manifest"
+          elif [[ '${{ runner.os }}' == 'Linux' ]]; then
+            cc -std=c11 -Wall -Wextra -Werror "$source" -ldl -o "$probe"
+            "$probe" "$library" > "$manifest"
+          else
+            cc -std=c11 -Wall -Wextra -Werror "$source" -o "$probe"
+            "$probe" "$library" > "$manifest"
+          fi
+          test -s "$manifest"
+
+      - name: Generate, sign, verify, and package offline artifact
+        working-directory: talon-bin
+        shell: bash
+        run: |
+          output="$RUNNER_TEMP/talon-output"
+          mkdir -p "$output"
+          rustc_version="$(rustc --version --verbose | tr '\n' ';')"
+          cargo_version="$(cargo --version)"
+          manifest="$(python3 supply-chain/tools/release.py build \
+            --lock supply-chain/release-lock.json \
+            --core-root ../talon-core \
+            --talon-bin-root . \
+            --stage "$RUNNER_TEMP/talon-stage" \
+            --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" \
+            --core-build-manifest "$RUNNER_TEMP/core-build-manifest.json" \
+            --public-key "$RUNNER_TEMP/talon-release-public.pem" \
+            --output "$output" \
+            --platform '${{ matrix.platform }}' \
+            --build-source 'github-actions:darkmice/talon-bin/.github/workflows/build-enterprise-core.yml' \
+            --workflow-run-id '${{ github.run_id }}' \
+            --runner '${{ matrix.runner }}' \
+            --rustc "$rustc_version" \
+            --cargo "$cargo_version")"
+          signature="${manifest}.sig"
+          python3 supply-chain/tools/release.py sign \
+            --manifest "$manifest" \
+            --private-key "$RUNNER_TEMP/talon-release-key.pem" \
+            --signature "$signature"
+          python3 supply-chain/tools/release.py verify \
+            --manifest "$manifest" \
+            --signature "$signature" \
+            --public-key "$RUNNER_TEMP/talon-release-public.pem" \
+            --expected-key-id '${{ steps.lock.outputs.signing_key_id }}' \
+            --expected-key-sha256 '${{ steps.lock.outputs.signing_key_sha256 }}' \
+            --expected-release-tag '${{ steps.lock.outputs.release_tag }}' \
+            --expected-talon-bin-commit '${{ steps.lock.outputs.talon_bin_commit }}' \
+            --expected-core-repository '${{ steps.lock.outputs.core_repository }}' \
+            --expected-core-tag '${{ steps.lock.outputs.core_tag }}' \
+            --expected-core-commit '${{ steps.lock.outputs.core_commit }}' \
+            --expected-core-version '${{ steps.lock.outputs.core_version }}' \
+            --expected-abi-profile '${{ steps.lock.outputs.abi_profile }}' \
+            --expected-abi-version '${{ steps.lock.outputs.abi_version }}' \
+            --expected-header-sha256 '${{ steps.lock.outputs.header_sha256 }}'
+          cp "$RUNNER_TEMP/talon-release-public.pem" "$output/talon-release-public.pem"
+          python3 supply-chain/tools/release.py offline \
+            --manifest "$manifest" \
+            --signature "$signature" \
+            --public-key "$output/talon-release-public.pem" \
+            --expected-key-id '${{ steps.lock.outputs.signing_key_id }}' \
+            --expected-key-sha256 '${{ steps.lock.outputs.signing_key_sha256 }}' \
+            --expected-release-tag '${{ steps.lock.outputs.release_tag }}' \
+            --expected-talon-bin-commit '${{ steps.lock.outputs.talon_bin_commit }}' \
+            --expected-core-repository '${{ steps.lock.outputs.core_repository }}' \
+            --expected-core-tag '${{ steps.lock.outputs.core_tag }}' \
+            --expected-core-commit '${{ steps.lock.outputs.core_commit }}' \
+            --expected-core-version '${{ steps.lock.outputs.core_version }}' \
+            --expected-abi-profile '${{ steps.lock.outputs.abi_profile }}' \
+            --expected-abi-version '${{ steps.lock.outputs.abi_version }}' \
+            --expected-header-sha256 '${{ steps.lock.outputs.header_sha256 }}' \
+            --output "$output/talon-enterprise-core-${{ matrix.platform }}-offline.tar.gz"
+          (
+            cd "$output" || exit 1
+            checksum_files=()
+            for file in ./*; do
+              [[ "$file" == "./SHA256SUMS.txt" ]] || checksum_files+=("$file")
+            done
+            ((${#checksum_files[@]} > 0))
+            shasum -a 256 "${checksum_files[@]}" > SHA256SUMS.txt
+          )
+
+      - name: Upload signed offline candidate
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: talon-enterprise-core-${{ matrix.platform }}
+          path: ${{ runner.temp }}/talon-output/*
+          if-no-files-found: error
+          compression-level: 0

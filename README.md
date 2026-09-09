@@ -2,6 +2,10 @@
 
 Pre-built binaries and libraries for [Talon](https://github.com/darkmice/talon-bin) — AI-native multi-model data engine.
 
+Enterprise embedded consumers should use the pure-Core, signed and pinned
+artifact contract documented in [`supply-chain/README.md`](supply-chain/README.md).
+That path never resolves `latest` and does not pull AI / LLM / Agent modules.
+
 ## What is Talon?
 
 Talon is a multi-model data engine designed for AI applications. It combines **SQL + KV + TimeSeries + MessageQueue + Vector** capabilities in a single binary with zero external dependencies.
@@ -32,6 +36,9 @@ Go to the [Releases](https://github.com/darkmice/talon-bin/releases) page to dow
 
 ## Quick Start (Binary)
 
+The following `latest` example is retained only for legacy interactive use. It
+is not an acceptable Enterprise or reproducible-build installation source.
+
 ```bash
 # Download and extract (example: macOS Apple Silicon, default bundle)
 curl -LO https://github.com/darkmice/talon-bin/releases/latest/download/talon-macos-arm64.tar.gz
@@ -46,14 +53,37 @@ tar xzf talon-macos-arm64.tar.gz
 
 ## Use as Rust Dependency
 
-This repo includes a `talon-sys` crate that provides safe Rust bindings. It automatically downloads the pre-built library during `cargo build`.
+This repo includes a `talon-sys` crate that provides safe Rust bindings. Its
+default artifact is pure Talon Core. Local and downloaded libraries must be
+matched to an explicit SHA-256; unverified paths are rejected.
 
 Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-talon-sys = { git = "https://github.com/darkmice/talon-bin.git" }
+talon-sys = { git = "https://github.com/darkmice/talon-bin.git", rev = "replace-with-full-40-character-commit" }
 ```
+
+Replace the example value with the exact `release.talon_bin_commit` from the
+verified manifest. Do not omit `rev` for Enterprise builds.
+
+For an offline build, extract the signed Enterprise Core package, verify its
+manifest first, then provide the exact static library and digest:
+
+```bash
+PINNED_TALON_LIB_SHA256="sha256-from-manifest-artifact-files"
+TALON_LIB_DIR=/opt/talon/lib \
+TALON_LIB_SHA256="$PINNED_TALON_LIB_SHA256" \
+cargo build --locked --offline
+```
+
+Network download is disabled by default. The legacy fixed-version download
+requires both `TALON_ALLOW_NETWORK_DOWNLOAD=1` and the independently trusted
+`TALON_ARCHIVE_SHA256`; it never resolves `latest`.
+
+An explicit local source build requires `TALON_SOURCE_ROOT`, the full clean
+checkout SHA in `TALON_SOURCE_COMMIT`, and an explicit `TALON_RELEASE_DIR`.
+Sibling-directory discovery and cached unverified source outputs are disabled.
 
 Example usage:
 
@@ -109,7 +139,9 @@ clang main.c -L. -ltalon -o app
 
 ## Verify Checksums
 
-Each release includes a `SHA256SUMS.txt` file. Verify your download:
+Legacy releases include a `SHA256SUMS.txt` file. Enterprise Core candidates add
+a signed per-platform manifest, SBOM, license inventory, and offline bundle;
+verify those before loading the library.
 
 ```bash
 # Download the checksum file
@@ -123,4 +155,6 @@ shasum -a 256 -c SHA256SUMS.txt
 
 ## License
 
-MIT
+Talon Community Dual License Agreement: SSPL v1 or a separately executed Talon
+Commercial Enterprise License. See [`LICENSE`](LICENSE). The previous MIT label
+was inconsistent with the repository license and must not be relied upon.
