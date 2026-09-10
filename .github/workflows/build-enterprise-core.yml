@@ -39,6 +39,8 @@ jobs:
           python3 -m compileall -q supply-chain/tools supply-chain/tests
           python3 supply-chain/tools/release.py validate-lock \
             --lock supply-chain/release-lock.json --allow-gated
+          python3 supply-chain/tools/release.py validate-prefix-scan-conformance \
+            --path supply-chain/conformance/conditional-prefix-scan-v1.json
           python3 -m unittest discover -s supply-chain/tests -v
 
   build-signed-core:
