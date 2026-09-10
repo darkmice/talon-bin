@@ -1,0 +1,147 @@
+{
+  "schema_version": "1.0",
+  "release_tag": "UNRELEASED",
+  "channel": "enterprise-core",
+  "talon_bin_source": "workflow HEAD recorded in each signed manifest; a commit cannot hash a lock file that contains its own hash",
+  "core": {
+    "repository": "https://github.com/darkmice/talon-core",
+    "tag": null,
+    "commit": "18b96399610a9f8c2498d57f3a8ddcd44c2f57a0",
+    "cargo_version": "0.1.1",
+    "cargo_lock_sha256": "82cbfe1eb22380a7508a5149b3b2e1206283a6a835abd477025100c689890a61"
+  },
+  "abi": {
+    "profile": "talon-c-abi-json-execute-v1",
+    "version": 1,
+    "header": "include/talon.h",
+    "header_sha256": "16e43e7184e9195c3e5e613ee5d06137ca58bc2e4dac6798c64c4e367b40ec89",
+    "required_symbols": [
+      "talon_open",
+      "talon_close",
+      "talon_persist",
+      "talon_execute",
+      "talon_free_string"
+    ],
+    "capabilities": {
+      "storage_conditional_batch_v1": {
+        "status": "gated",
+        "reason": "The implementation exists only in an uncommitted Core worktree. The pinned clean Core commit does not expose this ABI."
+      }
+    }
+  },
+  "runtime_attestation": {
+    "status": "gated",
+    "reason": "The pinned clean Core commit predates talon_build_manifest. These fields record the frozen SDK revision-stream v2 runtime contract only; they do not promote the dirty development checkout into a release identity.",
+    "manifest_version": 1,
+    "abi_profile": "talon-native-c",
+    "abi_version": 1,
+    "required_symbols": [
+      "talon_open",
+      "talon_close",
+      "talon_run_sql",
+      "talon_run_sql_bin",
+      "talon_run_sql_param_bin",
+      "talon_kv_set",
+      "talon_kv_get",
+      "talon_kv_del",
+      "talon_kv_incrby",
+      "talon_kv_setnx",
+      "talon_vector_insert",
+      "talon_vector_search",
+      "talon_vector_search_bin",
+      "talon_start_server",
+      "talon_stop_server",
+      "talon_persist",
+      "talon_free_string",
+      "talon_free_bytes",
+      "talon_last_error",
+      "talon_last_error_code",
+      "talon_clear_last_error",
+      "talon_build_manifest",
+      "talon_execute"
+    ],
+    "features": [
+      "native_build_manifest_v1",
+      "native_error_codes_v1",
+      "sql_tlv_v1",
+      "storage_conditional_batch_v1",
+      "native_conditional_transaction_v2",
+      "revision_stream_v1",
+      "revision_stream_v2_mmr_proof"
+    ],
+    "capabilities": [
+      {
+        "name": "storage_conditional_batch",
+        "version": 1,
+        "status": "available",
+        "reason": null
+      },
+      {
+        "name": "native_conditional_transaction_v2",
+        "version": 2,
+        "status": "available",
+        "reason": null
+      },
+      {
+        "name": "revision_stream",
+        "version": 2,
+        "status": "gated",
+        "reason": "v2 authenticates fixed-head pages with MMR inclusion and boundary proofs, but SDK cross-target conformance, release capacity, recovery fixtures, and adversarial soak evidence remain open; legacy v1 remains linear"
+      },
+      {
+        "name": "native_quorum",
+        "version": 1,
+        "status": "gated",
+        "reason": "only storage conditional batches enter the single quorum log; remaining mutation families are fail-closed"
+      },
+      {
+        "name": "server_ha_production_admission",
+        "version": 1,
+        "status": "gated",
+        "reason": "TLS, full fault matrix, recovery compatibility, capacity, and mixed-version evidence remain open"
+      }
+    ]
+  },
+  "build": {
+    "rust_toolchain": "1.92.0",
+    "cargo_args": ["build", "--locked", "--release", "--lib"],
+    "reproducibility": "exact source and toolchain with deterministic packaging; native code bytes are not claimed reproducible across mutable hosted runner images"
+  },
+  "signing": {
+    "status": "gated",
+    "algorithm": "Ed25519",
+    "key_id": "UNASSIGNED",
+    "public_key_sha256": null,
+    "reason": "A production release public key and matching GitHub secret have not been provisioned."
+  },
+  "targets": [
+    {
+      "platform": "linux-amd64",
+      "triple": "x86_64-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "static_library": "libtalon.a",
+      "dynamic_library": "libtalon.so"
+    },
+    {
+      "platform": "linux-arm64",
+      "triple": "aarch64-unknown-linux-gnu",
+      "runner": "ubuntu-24.04",
+      "static_library": "libtalon.a",
+      "dynamic_library": "libtalon.so"
+    },
+    {
+      "platform": "macos-amd64",
+      "triple": "x86_64-apple-darwin",
+      "runner": "macos-15-intel",
+      "static_library": "libtalon.a",
+      "dynamic_library": "libtalon.dylib"
+    },
+    {
+      "platform": "macos-arm64",
+      "triple": "aarch64-apple-darwin",
+      "runner": "macos-15",
+      "static_library": "libtalon.a",
+      "dynamic_library": "libtalon.dylib"
+    }
+  ]
+}

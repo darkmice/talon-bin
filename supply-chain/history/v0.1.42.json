@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "release_tag": "v0.1.42",
+  "talon_bin_commit": "06a24443f2402f671475c063b1a10ddfd834face",
+  "core": {
+    "repository": "https://github.com/darkmice/talon-core",
+    "requested_ref": "main",
+    "observed_checkout_commit": "d5369e6d5cc53423dd8f729bc49b95b53eb35269",
+    "cargo_version": "0.1.1",
+    "cargo_lock_sha256": "82cbfe1eb22380a7508a5149b3b2e1206283a6a835abd477025100c689890a61",
+    "abi_header_sha256": "16e43e7184e9195c3e5e613ee5d06137ca58bc2e4dac6798c64c4e367b40ec89"
+  },
+  "provenance": {
+    "status": "legacy-workflow-log-recovered",
+    "binary_embedded_source_identity": false,
+    "signed_manifest_available": false,
+    "workflow_run_id": 27514982937,
+    "workflow_run_url": "https://github.com/darkmice/talon-bin/actions/runs/27514982937",
+    "evidence": "The checkout log recorded the exact Core HEAD. The released binaries do not export or embed a verifiable source commit, so this record must not be treated as binary self-attestation."
+  }
+}

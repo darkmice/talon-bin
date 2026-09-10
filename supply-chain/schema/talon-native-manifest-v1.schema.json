@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/darkmice/talon-bin/supply-chain/schema/talon-native-manifest-v1.schema.json",
+  "title": "Talon native artifact manifest",
+  "type": "object",
+  "required": ["schema_version", "release", "source", "abi", "build", "artifact", "materials", "signing", "compatibility", "gates"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "release": {
+      "type": "object",
+      "required": ["tag", "channel", "talon_bin_commit"],
+      "properties": {
+        "tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "channel": {"const": "enterprise-core"},
+        "talon_bin_commit": {"$ref": "#/$defs/commit"}
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "type": "object",
+      "required": ["repository", "tag", "commit", "cargo_version", "cargo_lock_sha256", "source_date_epoch", "clean"],
+      "properties": {
+        "repository": {"const": "https://github.com/darkmice/talon-core"},
+        "tag": {"type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$"},
+        "commit": {"$ref": "#/$defs/commit"},
+        "cargo_version": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"},
+        "cargo_lock_sha256": {"$ref": "#/$defs/sha256"},
+        "source_date_epoch": {"type": "integer", "minimum": 1},
+        "clean": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "abi": {
+      "type": "object",
+      "required": ["profile", "version", "header_sha256", "required_symbols"],
+      "properties": {
+        "profile": {"const": "talon-native-c"},
+        "version": {"const": 1},
+        "header_sha256": {"$ref": "#/$defs/sha256"},
+        "required_symbols": {
+          "type": "array",
+          "minItems": 23,
+          "maxItems": 23,
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^talon_[a-z0-9_]+$"},
+          "allOf": [
+            {"contains": {"const": "talon_open"}},
+            {"contains": {"const": "talon_close"}},
+            {"contains": {"const": "talon_run_sql"}},
+            {"contains": {"const": "talon_run_sql_bin"}},
+            {"contains": {"const": "talon_run_sql_param_bin"}},
+            {"contains": {"const": "talon_kv_set"}},
+            {"contains": {"const": "talon_kv_get"}},
+            {"contains": {"const": "talon_kv_del"}},
+            {"contains": {"const": "talon_kv_incrby"}},
+            {"contains": {"const": "talon_kv_setnx"}},
+            {"contains": {"const": "talon_vector_insert"}},
+            {"contains": {"const": "talon_vector_search"}},
+            {"contains": {"const": "talon_vector_search_bin"}},
+            {"contains": {"const": "talon_start_server"}},
+            {"contains": {"const": "talon_stop_server"}},
+            {"contains": {"const": "talon_persist"}},
+            {"contains": {"const": "talon_free_string"}},
+            {"contains": {"const": "talon_free_bytes"}},
+            {"contains": {"const": "talon_last_error"}},
+            {"contains": {"const": "talon_last_error_code"}},
+            {"contains": {"const": "talon_clear_last_error"}},
+            {"contains": {"const": "talon_build_manifest"}},
+            {"contains": {"const": "talon_execute"}}
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "build": {
+      "type": "object",
+      "required": ["source", "workflow_run_id", "runner", "target", "rustc", "cargo", "command", "reproducibility"],
+      "properties": {
+        "source": {"type": "string", "minLength": 1},
+        "workflow_run_id": {"type": "string", "minLength": 1},
+        "runner": {"type": "string", "minLength": 1},
+        "target": {"type": "string", "minLength": 1},
+        "rustc": {"type": "string", "minLength": 1},
+        "cargo": {"type": "string", "minLength": 1},
+        "command": {"const": ["build", "--locked", "--release", "--lib"]},
+        "reproducibility": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["kind", "platform", "archive", "files"],
+      "properties": {
+        "kind": {"const": "talon-core-native-library"},
+        "platform": {"enum": ["linux-amd64", "linux-arm64", "macos-amd64", "macos-arm64"]},
+        "archive": {"$ref": "#/$defs/fileRecord"},
+        "files": {"type": "array", "minItems": 5, "maxItems": 5, "uniqueItems": true, "items": {"$ref": "#/$defs/fileRecord"}}
+      },
+      "additionalProperties": false
+    },
+    "materials": {
+      "type": "object",
+      "required": ["sbom", "license_inventory", "core_license", "notice"],
+      "properties": {
+        "sbom": {"$ref": "#/$defs/fileRecord"},
+        "license_inventory": {"$ref": "#/$defs/fileRecord"},
+        "core_license": {"$ref": "#/$defs/fileRecord"},
+        "notice": {"$ref": "#/$defs/fileRecord"}
+      },
+      "additionalProperties": false
+    },
+    "signing": {
+      "type": "object",
+      "required": ["algorithm", "key_id", "public_key_sha256", "signature"],
+      "properties": {
+        "algorithm": {"const": "Ed25519"},
+        "key_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "not": {"const": "UNASSIGNED"}
+        },
+        "public_key_sha256": {"$ref": "#/$defs/sha256"},
+        "signature": {"type": "string", "pattern": "^libtalon-core-(linux-amd64|linux-arm64|macos-amd64|macos-arm64)\\.manifest\\.json\\.sig$"}
+      },
+      "additionalProperties": false
+    },
+    "compatibility": {
+      "type": "object",
+      "required": ["sdk_contract", "runtime_verification", "binary_self_attestation"],
+      "properties": {
+        "sdk_contract": {"const": "talon-native-manifest-v1"},
+        "runtime_verification": {"const": "ed25519-manifest+sha256-native+abi-identity"},
+        "binary_self_attestation": {"const": true}
+      },
+      "additionalProperties": false
+    },
+    "gates": {
+      "type": "object",
+      "required": ["storage_conditional_batch_v1"],
+      "properties": {
+        "storage_conditional_batch_v1": {
+          "type": "object",
+          "required": ["status", "reason"],
+          "properties": {
+            "status": {"const": "gated"},
+            "reason": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "fileRecord": {
+      "type": "object",
+      "required": ["path", "size", "sha256"],
+      "properties": {
+        "path": {"type": "string", "pattern": "^[A-Za-z0-9._-]+$"},
+        "size": {"type": "integer", "minimum": 1},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

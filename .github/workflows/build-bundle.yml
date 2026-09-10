@@ -1,63 +1,50 @@
-name: Build Talon Modules
+name: Build Talon Modules (Legacy, unsigned)
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
       talon_core_ref:
-        description: 'Talon Core (superclaw-db) git ref (tag/branch/sha)'
+        description: 'Talon Core full 40-character commit SHA'
         required: true
-        default: 'main'
       talon_ai_ref:
-        description: 'Talon AI git ref (tag/branch/sha)'
+        description: 'Talon AI full 40-character commit SHA'
         required: true
-        default: 'main'
       talon_llm_ref:
-        description: 'Talon LLM git ref (tag/branch/sha)'
+        description: 'Talon LLM full 40-character commit SHA'
         required: true
-        default: 'main'
       talon_agent_ref:
-        description: 'Talon Agent git ref (tag/branch/sha)'
+        description: 'Talon Agent full 40-character commit SHA'
         required: true
-        default: 'main'
       talon_trace_ref:
-        description: 'Talon Trace git ref (tag/branch/sha)'
+        description: 'Talon Trace full 40-character commit SHA'
         required: true
-        default: 'main'
       talon_sandbox_ref:
-        description: 'Talon Sandbox git ref (tag/branch/sha)'
+        description: 'Talon Sandbox full 40-character commit SHA'
         required: true
-        default: 'main'
       talon_evocore_ref:
-        description: 'Talon EvoCore git ref (tag/branch/sha)'
+        description: 'Talon EvoCore full 40-character commit SHA'
         required: true
-        default: 'main'
       talon_session_ref:
-        description: 'Talon Session git ref (tag/branch/sha)'
+        description: 'Talon Session full 40-character commit SHA'
         required: true
-        default: 'main'
       talon_block_ref:
-        description: 'Talon Block git ref (tag/branch/sha)'
+        description: 'Talon Block full 40-character commit SHA'
         required: true
-        default: 'main'
       release_tag:
         description: 'Release tag name (e.g. v0.1.17)'
         required: true
-        default: 'v0.1.18'
 
 env:
-  RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.release_tag }}
-  CORE_REF: ${{ inputs.talon_core_ref || 'main' }}
-  AI_REF: ${{ inputs.talon_ai_ref || 'main' }}
-  LLM_REF: ${{ inputs.talon_llm_ref || 'main' }}
-  AGENT_REF: ${{ inputs.talon_agent_ref || 'main' }}
-  TRACE_REF: ${{ inputs.talon_trace_ref || 'main' }}
-  SANDBOX_REF: ${{ inputs.talon_sandbox_ref || 'main' }}
-  EVOCORE_REF: ${{ inputs.talon_evocore_ref || 'main' }}
-  SESSION_REF: ${{ inputs.talon_session_ref || 'main' }}
-  BLOCK_REF: ${{ inputs.talon_block_ref || 'main' }}
+  RELEASE_TAG: ${{ inputs.release_tag }}
+  CORE_REF: ${{ inputs.talon_core_ref }}
+  AI_REF: ${{ inputs.talon_ai_ref }}
+  LLM_REF: ${{ inputs.talon_llm_ref }}
+  AGENT_REF: ${{ inputs.talon_agent_ref }}
+  TRACE_REF: ${{ inputs.talon_trace_ref }}
+  SANDBOX_REF: ${{ inputs.talon_sandbox_ref }}
+  EVOCORE_REF: ${{ inputs.talon_evocore_ref }}
+  SESSION_REF: ${{ inputs.talon_session_ref }}
+  BLOCK_REF: ${{ inputs.talon_block_ref }}
 
 permissions:
   contents: write
@@ -129,6 +116,20 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
+      - name: Reject mutable legacy source refs
+        shell: bash
+        run: |
+          for value in "$CORE_REF" "$AI_REF" "$LLM_REF" "$AGENT_REF" "$TRACE_REF" "$SANDBOX_REF" "$EVOCORE_REF" "$SESSION_REF" "$BLOCK_REF"; do
+            [[ "$value" =~ ^[0-9a-f]{40}$ ]] || {
+              echo "::error::All legacy source refs must be full lowercase commit SHAs"
+              exit 1
+            }
+          done
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::release_tag must be vX.Y.Z"
+            exit 1
+          }
+
       - name: Verify TALON_AI_TOKEN is set
         shell: bash
         run: |
@@ -222,6 +223,15 @@ jobs:
       - name: Install cross-compilation tools (apt)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
+          # The hosted Ubuntu image may expose a stale Google Chrome index whose
+          # checksum changes during the image lifetime. It is unrelated to the
+          # ARM cross compiler, so isolate that source rather than letting apt
+          # update fail before the build starts.
+          for source_file in /etc/apt/sources.list.d/*chrome*; do
+            [ -f "$source_file" ] || continue
+            sudo mv "$source_file" "/tmp/$(basename "$source_file").disabled"
+          done
+          sudo rm -rf /var/lib/apt/lists/*
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
 
@@ -325,7 +335,7 @@ jobs:
           cp ../superclaw-db/target/${{ matrix.target }}/release/talon dist-bin-core/ 2>/dev/null || true
           cp ../superclaw-db/target/${{ matrix.target }}/release/talon-cli dist-bin-core/ 2>/dev/null || true
           cp ../superclaw-db/target/${{ matrix.target }}/release/talon-tui dist-bin-core/ 2>/dev/null || true
-          cd dist-bin-core && tar czf talon-core-${{ matrix.archive_suffix }}.tar.gz * && cd ..
+          cd dist-bin-core && tar czf talon-core-${{ matrix.archive_suffix }}.tar.gz ./* && cd ..
 
       - name: Package Talon Core binaries (Windows)
         if: runner.os == 'Windows'
@@ -336,7 +346,7 @@ jobs:
           Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon.exe dist-bin-core/talon.exe -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon-cli.exe dist-bin-core/talon-cli.exe -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon-tui.exe dist-bin-core/talon-tui.exe -ErrorAction SilentlyContinue
-          cd dist-bin-core; tar czf talon-core-${{ matrix.archive_suffix }}.tar.gz *; cd ..
+          cd dist-bin-core; tar czf talon-core-${{ matrix.archive_suffix }}.tar.gz ./*; cd ..
 
       - name: Package default bundle binaries (Unix)
         if: runner.os != 'Windows'
@@ -346,7 +356,7 @@ jobs:
           cp talon-server/target/${{ matrix.target }}/release/talon dist-bin-default/ 2>/dev/null || true
           cp ../superclaw-db/target/${{ matrix.target }}/release/talon-cli dist-bin-default/ 2>/dev/null || true
           cp ../superclaw-db/target/${{ matrix.target }}/release/talon-tui dist-bin-default/ 2>/dev/null || true
-          cd dist-bin-default && tar czf talon-${{ matrix.archive_suffix }}.tar.gz * && cd ..
+          cd dist-bin-default && tar czf talon-${{ matrix.archive_suffix }}.tar.gz ./* && cd ..
 
       - name: Package default bundle binaries (Windows)
         if: runner.os == 'Windows'
@@ -357,7 +367,7 @@ jobs:
           Copy-Item talon-server/target/${{ matrix.target }}/release/talon.exe dist-bin-default/talon.exe -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon-cli.exe dist-bin-default/talon-cli.exe -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon-tui.exe dist-bin-default/talon-tui.exe -ErrorAction SilentlyContinue
-          cd dist-bin-default; tar czf talon-${{ matrix.archive_suffix }}.tar.gz *; cd ..
+          cd dist-bin-default; tar czf talon-${{ matrix.archive_suffix }}.tar.gz ./*; cd ..
 
       - name: Package full bundle binaries (Unix)
         if: runner.os != 'Windows' && matrix.use_cross != true
@@ -367,7 +377,7 @@ jobs:
           cp talon-server-full/target/${{ matrix.target }}/release/talon dist-bin-full/ 2>/dev/null || true
           cp ../superclaw-db/target/${{ matrix.target }}/release/talon-cli dist-bin-full/ 2>/dev/null || true
           cp ../superclaw-db/target/${{ matrix.target }}/release/talon-tui dist-bin-full/ 2>/dev/null || true
-          cd dist-bin-full && tar czf talon-full-${{ matrix.archive_suffix }}.tar.gz * && cd ..
+          cd dist-bin-full && tar czf talon-full-${{ matrix.archive_suffix }}.tar.gz ./* && cd ..
 
       - name: Package full bundle binaries (Windows)
         if: runner.os == 'Windows' && matrix.use_cross != true
@@ -378,7 +388,7 @@ jobs:
           Copy-Item talon-server-full/target/${{ matrix.target }}/release/talon.exe dist-bin-full/talon.exe -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon-cli.exe dist-bin-full/talon-cli.exe -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon-tui.exe dist-bin-full/talon-tui.exe -ErrorAction SilentlyContinue
-          cd dist-bin-full; tar czf talon-full-${{ matrix.archive_suffix }}.tar.gz *; cd ..
+          cd dist-bin-full; tar czf talon-full-${{ matrix.archive_suffix }}.tar.gz ./*; cd ..
 
       # ─── Package libraries ─────────────────────────────────────────────
 
@@ -390,7 +400,7 @@ jobs:
           cp ../superclaw-db/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} dist-core/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} 2>/dev/null || true
           cp ../superclaw-db/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} dist-core/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} 2>/dev/null || true
           cp ../superclaw-db/include/talon.h dist-core/ 2>/dev/null || true
-          cd dist-core && tar czf libtalon-core-${{ matrix.archive_suffix }}.tar.gz * && cd ..
+          cd dist-core && tar czf libtalon-core-${{ matrix.archive_suffix }}.tar.gz ./* && cd ..
 
       - name: Package Talon Core (Windows)
         if: runner.os == 'Windows'
@@ -401,7 +411,7 @@ jobs:
           Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon.lib dist-core/talon.lib -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/target/${{ matrix.target }}/release/talon.dll dist-core/talon.dll -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/include/talon.h dist-core/ -ErrorAction SilentlyContinue
-          cd dist-core; tar czf libtalon-core-${{ matrix.archive_suffix }}.tar.gz *; cd ..
+          cd dist-core; tar czf libtalon-core-${{ matrix.archive_suffix }}.tar.gz ./*; cd ..
 
       - name: Package talon-bundle (Unix)
         if: runner.os != 'Windows'
@@ -411,7 +421,7 @@ jobs:
           cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle.${{ matrix.lib_ext }} dist-lib/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} 2>/dev/null || true
           cp talon-bundle/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle.${{ matrix.dylib_ext }} dist-lib/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} 2>/dev/null || true
           cp ../superclaw-db/include/talon.h dist-lib/ 2>/dev/null || true
-          cd dist-lib && tar czf libtalon-${{ matrix.archive_suffix }}.tar.gz * && cd ..
+          cd dist-lib && tar czf libtalon-${{ matrix.archive_suffix }}.tar.gz ./* && cd ..
 
       - name: Package talon-bundle (Windows)
         if: runner.os == 'Windows'
@@ -422,7 +432,7 @@ jobs:
           Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon_bundle.lib dist-lib/talon.lib -ErrorAction SilentlyContinue
           Copy-Item talon-bundle/target/${{ matrix.target }}/release/talon_bundle.dll dist-lib/talon.dll -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/include/talon.h dist-lib/ -ErrorAction SilentlyContinue
-          cd dist-lib; tar czf libtalon-${{ matrix.archive_suffix }}.tar.gz *; cd ..
+          cd dist-lib; tar czf libtalon-${{ matrix.archive_suffix }}.tar.gz ./*; cd ..
 
       - name: Verify Windows default bundle symbols
         if: runner.os == 'Windows'
@@ -461,7 +471,7 @@ jobs:
           cp talon-bundle-evocore/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle_evocore.${{ matrix.lib_ext }} dist-full/${{ matrix.lib_prefix }}talon.${{ matrix.lib_ext }} 2>/dev/null || true
           cp talon-bundle-evocore/target/${{ matrix.target }}/release/${{ matrix.lib_prefix }}talon_bundle_evocore.${{ matrix.dylib_ext }} dist-full/${{ matrix.lib_prefix }}talon.${{ matrix.dylib_ext }} 2>/dev/null || true
           cp ../superclaw-db/include/talon.h dist-full/ 2>/dev/null || true
-          cd dist-full && tar czf libtalon-evocore-${{ matrix.archive_suffix }}.tar.gz * && cd ..
+          cd dist-full && tar czf libtalon-evocore-${{ matrix.archive_suffix }}.tar.gz ./* && cd ..
 
       - name: Package talon-bundle-evocore (full bundle, Windows)
         if: runner.os == 'Windows' && matrix.use_cross != true
@@ -472,7 +482,7 @@ jobs:
           Copy-Item talon-bundle-evocore/target/${{ matrix.target }}/release/talon_bundle_evocore.lib dist-full/talon.lib -ErrorAction SilentlyContinue
           Copy-Item talon-bundle-evocore/target/${{ matrix.target }}/release/talon_bundle_evocore.dll dist-full/talon.dll -ErrorAction SilentlyContinue
           Copy-Item ../superclaw-db/include/talon.h dist-full/ -ErrorAction SilentlyContinue
-          cd dist-full; tar czf libtalon-evocore-${{ matrix.archive_suffix }}.tar.gz *; cd ..
+          cd dist-full; tar czf libtalon-evocore-${{ matrix.archive_suffix }}.tar.gz ./*; cd ..
 
       - name: Verify Windows full bundle symbols
         if: runner.os == 'Windows' && matrix.use_cross != true
@@ -563,8 +573,8 @@ jobs:
 
       - name: Generate checksums
         run: |
-          cd release
-          sha256sum *.tar.gz > SHA256SUMS.txt
+          cd release || exit 1
+          sha256sum ./*.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create Release
@@ -574,6 +584,10 @@ jobs:
           name: "Talon ${{ env.RELEASE_TAG }} (Core / Bundle / Full)"
           body: |
             ## Talon ${{ env.RELEASE_TAG }}
+
+            > **Legacy unsigned bundle.** This release path is not acceptable
+            > for AI Platform Enterprise embedded Talon. Use the signed,
+            > pinned `enterprise-core` supply-chain manifest and offline bundle.
 
             同时发布两类产物：
             - 可直接运行的服务端二进制包
