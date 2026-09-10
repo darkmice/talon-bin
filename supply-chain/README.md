@@ -20,6 +20,11 @@ Platform domain logic.
   is deliberate: the pinned clean Core commit predates `talon_build_manifest`.
   The contract fields describe the next release gate and are not evidence that
   the dirty development checkout was released.
+- `conformance/conditional-prefix-scan-v1.json` records the reviewed v1
+  prefix-scan digest vector and all four-target evidence requirements. It is
+  deliberately `gated`: a Core PR reference is not a release identity, and it
+  cannot be promoted without a clean tag, typed SDK surface, and cross-target
+  proof.
 - Each platform gets a deterministic inner native archive, CycloneDX SBOM,
   license inventory, Core license, NOTICE, signed manifest, and deterministic
   outer offline bundle. The native compiler output is not claimed bit-for-bit
@@ -89,6 +94,8 @@ test suite additionally uses the fully version-pinned packages in
 python3 -m pip install -r supply-chain/test-requirements.txt
 python3 supply-chain/tools/release.py validate-lock \
   --lock supply-chain/release-lock.json --allow-gated
+python3 supply-chain/tools/release.py validate-prefix-scan-conformance \
+  --path supply-chain/conformance/conditional-prefix-scan-v1.json
 python3 -m unittest discover -s supply-chain/tests -v
 ```
 

@@ -29,6 +29,7 @@ FILE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 TOOLCHAIN_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 SEMVER_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$")
 CORE_REPOSITORY = "https://github.com/darkmice/talon-core"
+SDK_REPOSITORY = "https://github.com/darkmice/talon-sdk-go"
 
 SDK_REQUIRED_SYMBOLS = [
     "talon_open",
@@ -62,6 +63,7 @@ RUNTIME_FEATURE_CONTRACT = (
     "sql_tlv_v1",
     "storage_conditional_batch_v1",
     "native_conditional_transaction_v2",
+    "storage_conditional_prefix_scan_v1",
     "revision_stream_v1",
     "revision_stream_v2_mmr_proof",
 )
@@ -71,6 +73,17 @@ REVISION_STREAM_V2_GATED_REASON = (
     "cross-target conformance, release capacity, recovery fixtures, and adversarial soak "
     "evidence remain open; legacy v1 remains linear"
 )
+
+PREFIX_SCAN_V1_GATED_REASON = (
+    "v1 has merged Core and Go SDK implementations but no immutable Core tag, SDK release tag, "
+    "cross-target digest conformance, or four-target release evidence"
+)
+PREFIX_SCAN_V1_CONFORMANCE_PATH = Path(__file__).resolve().parents[1] / "conformance" / "conditional-prefix-scan-v1.json"
+PREFIX_SCAN_V1_IMPLEMENTATION_COMMIT = "2f337f524d0edc2dd2a7720b84aa8f036591b61e"
+PREFIX_SCAN_V1_MERGE_COMMIT = "ad0ee98d445193f2c1e3345ca531108ddfa943bd"
+PREFIX_SCAN_V1_SDK_IMPLEMENTATION_COMMIT = "2f26fa9c142d286ddfcd08bdbacad617ba3c02d3"
+PREFIX_SCAN_V1_SDK_MERGE_COMMIT = "3d66ae0fc7dd3bd3ba8435e178ced4d853a50060"
+PREFIX_SCAN_V1_DIGEST = "e7e7da431dc036ef3f584881544503f6124c395c64ccf9984e08381e30b5cee5"
 
 # These public-header tokens bind the release admission check to the authenticated
 # v2 wire contract. The locked header digest remains the full source of truth; the
@@ -91,6 +104,7 @@ REVISION_STREAM_V2_HEADER_TOKENS = (
 RUNTIME_CAPABILITY_CONTRACT = {
     "storage_conditional_batch": (1, "available"),
     "native_conditional_transaction_v2": (2, "available"),
+    "storage_conditional_prefix_scan": (1, "gated"),
     "revision_stream": (2, "gated"),
     "native_quorum": (1, "gated"),
     "server_ha_production_admission": (1, "gated"),
@@ -372,9 +386,203 @@ def validate_runtime_attestation_contract(value: Any) -> dict[str, Any]:
                 raise ReleaseError(f"gated runtime capability {name} requires a reason")
             if name == "revision_stream" and reason != REVISION_STREAM_V2_GATED_REASON:
                 raise ReleaseError("runtime capability revision_stream gated reason does not match the v2 contract")
+            if name == "storage_conditional_prefix_scan" and reason != PREFIX_SCAN_V1_GATED_REASON:
+                raise ReleaseError("runtime capability storage_conditional_prefix_scan gated reason does not match the v1 contract")
         elif reason is not None:
             raise ReleaseError(f"available runtime capability {name} must have a null reason")
     return attestation
+
+
+def prefix_scan_optional_bytes(value: Any, label: str) -> bytes:
+    if value is None:
+        return b"\x00"
+    if not isinstance(value, str):
+        raise ReleaseError(f"{label} must be null or a string")
+    encoded = value.encode("utf-8")
+    return b"\x01" + len(encoded).to_bytes(4, "big") + encoded
+
+
+def prefix_scan_optional_u64(value: Any, label: str) -> bytes:
+    if value is None:
+        return b"\x00"
+    if not isinstance(value, str) or not re.fullmatch(r"[1-9][0-9]*", value):
+        raise ReleaseError(f"{label} must be null or a canonical positive u64 string")
+    number = int(value)
+    if number > 2**64 - 1:
+        raise ReleaseError(f"{label} exceeds u64")
+    return b"\x01" + number.to_bytes(8, "big")
+
+
+def prefix_scan_bytes(value: Any, label: str) -> bytes:
+    if not isinstance(value, list) or any(type(item) is not int or item < 0 or item > 255 for item in value):
+        raise ReleaseError(f"{label} must be an array of byte values")
+    return bytes(value)
+
+
+def prefix_scan_u64(value: Any, label: str, *, allow_zero: bool = True) -> int:
+    if not isinstance(value, str) or not re.fullmatch(r"0|[1-9][0-9]*", value):
+        raise ReleaseError(f"{label} must be a canonical u64 string")
+    number = int(value)
+    if number > 2**64 - 1 or (not allow_zero and number == 0):
+        raise ReleaseError(f"{label} is outside its u64 range")
+    return number
+
+
+def conditional_prefix_scan_response_digest(request: dict[str, Any], response: dict[str, Any]) -> str:
+    required_request = require_exact_keys(
+        request,
+        {"version", "request_id", "namespace", "prefix", "limit", "cursor", "revision"},
+        "conditional-prefix-scan digest request",
+    )
+    required_response = require_exact_keys(
+        response,
+        {
+            "observed_revision",
+            "snapshot_revision",
+            "position",
+            "entries",
+            "next_cursor",
+            "next_cursor_expires_at_unix_ms",
+        },
+        "conditional-prefix-scan digest response",
+    )
+    if type(required_request["version"]) is not int or required_request["version"] != 1:
+        raise ReleaseError("conditional-prefix-scan digest version must be 1")
+    if not isinstance(required_request["request_id"], str) or not required_request["request_id"].strip():
+        raise ReleaseError("conditional-prefix-scan digest request_id must be non-empty text")
+    if not isinstance(required_request["namespace"], str) or not required_request["namespace"]:
+        raise ReleaseError("conditional-prefix-scan digest namespace must be non-empty text")
+    if type(required_request["limit"]) is not int or not 1 <= required_request["limit"] <= 256:
+        raise ReleaseError("conditional-prefix-scan digest limit must be 1..256")
+    prefix = prefix_scan_bytes(required_request["prefix"], "conditional-prefix-scan digest prefix")
+
+    digest = hashlib.sha256()
+    digest.update(b"TALON_CONDITIONAL_PREFIX_SCAN_RESULT_V1")
+    digest.update(required_request["version"].to_bytes(2, "big"))
+    for label in ("request_id", "namespace"):
+        encoded = required_request[label].encode("utf-8")
+        digest.update(len(encoded).to_bytes(4, "big"))
+        digest.update(encoded)
+    digest.update(len(prefix).to_bytes(4, "big"))
+    digest.update(prefix)
+    digest.update(required_request["limit"].to_bytes(2, "big"))
+    digest.update(prefix_scan_optional_bytes(required_request["cursor"], "conditional-prefix-scan digest cursor"))
+    digest.update(prefix_scan_optional_u64(required_request["revision"], "conditional-prefix-scan digest revision"))
+    for label in ("observed_revision", "snapshot_revision", "position"):
+        digest.update(prefix_scan_u64(required_response[label], f"conditional-prefix-scan digest {label}").to_bytes(8, "big"))
+    entries = required_response["entries"]
+    if not isinstance(entries, list) or len(entries) > required_request["limit"]:
+        raise ReleaseError("conditional-prefix-scan digest entries exceed the request limit")
+    digest.update(len(entries).to_bytes(4, "big"))
+    position = prefix_scan_u64(required_response["position"], "conditional-prefix-scan digest position")
+    previous_key = None
+    for offset, entry in enumerate(entries):
+        entry = require_exact_keys(entry, {"index", "key", "value"}, f"conditional-prefix-scan digest entries[{offset}]")
+        index = prefix_scan_u64(entry["index"], f"conditional-prefix-scan digest entries[{offset}].index")
+        if index != position + offset:
+            raise ReleaseError("conditional-prefix-scan digest entry indexes must be contiguous")
+        key = prefix_scan_bytes(entry["key"], f"conditional-prefix-scan digest entries[{offset}].key")
+        value = prefix_scan_bytes(entry["value"], f"conditional-prefix-scan digest entries[{offset}].value")
+        if previous_key is not None and key <= previous_key:
+            raise ReleaseError("conditional-prefix-scan digest entry keys must be strictly ordered")
+        previous_key = key
+        digest.update(index.to_bytes(8, "big"))
+        digest.update(len(key).to_bytes(4, "big"))
+        digest.update(key)
+        digest.update(len(value).to_bytes(4, "big"))
+        digest.update(value)
+    digest.update(prefix_scan_optional_bytes(required_response["next_cursor"], "conditional-prefix-scan digest next_cursor"))
+    digest.update(prefix_scan_optional_u64(
+        required_response["next_cursor_expires_at_unix_ms"],
+        "conditional-prefix-scan digest next_cursor_expires_at_unix_ms",
+    ))
+    return digest.hexdigest()
+
+
+def validate_prefix_scan_v1_conformance(path: Path, *, require_ready: bool = False, expected_core: dict[str, Any] | None = None) -> dict[str, Any]:
+    value = load_json(path)
+    value = require_exact_keys(
+        value,
+        {"schema_version", "contract", "status", "reason", "source", "sdk", "runtime", "limits", "digest_vector", "release_evidence"},
+        "conditional-prefix-scan v1 conformance",
+    )
+    if value["schema_version"] != "1.0" or value["contract"] != "talon-conditional-prefix-scan-v1":
+        raise ReleaseError("conditional-prefix-scan conformance schema or contract is invalid")
+    if value["status"] not in ("gated", "ready"):
+        raise ReleaseError("conditional-prefix-scan conformance status must be gated or ready")
+    if value["status"] == "gated":
+        if value["reason"] != PREFIX_SCAN_V1_GATED_REASON:
+            raise ReleaseError("conditional-prefix-scan conformance gated reason does not match the v1 contract")
+    elif value["reason"] is not None:
+        raise ReleaseError("ready conditional-prefix-scan conformance cannot have a reason")
+
+    source = require_exact_keys(value["source"], {"repository", "implementation_pull_request", "implementation_commit", "merge_commit", "release_identity"}, "conditional-prefix-scan conformance source")
+    if (
+        source["repository"] != CORE_REPOSITORY
+        or source["implementation_pull_request"] != 11
+        or source["implementation_commit"] != PREFIX_SCAN_V1_IMPLEMENTATION_COMMIT
+        or source["merge_commit"] != PREFIX_SCAN_V1_MERGE_COMMIT
+    ):
+        raise ReleaseError("conditional-prefix-scan conformance source does not match the reviewed Core implementation")
+    if value["status"] == "gated":
+        if source["release_identity"] is not None:
+            raise ReleaseError("gated conditional-prefix-scan conformance cannot name a release identity")
+    else:
+        identity = require_exact_keys(source["release_identity"], {"tag", "commit"}, "conditional-prefix-scan release identity")
+        if not isinstance(identity["tag"], str) or not TAG_RE.fullmatch(identity["tag"]) or not isinstance(identity["commit"], str) or not SHA_RE.fullmatch(identity["commit"]):
+            raise ReleaseError("conditional-prefix-scan release identity must contain a tag and full commit SHA")
+        if expected_core is not None and (identity["tag"] != expected_core["tag"] or identity["commit"] != expected_core["commit"]):
+            raise ReleaseError("conditional-prefix-scan release identity does not match the release lock")
+
+    sdk = require_exact_keys(value["sdk"], {"repository", "implementation_pull_request", "implementation_commit", "merge_commit", "release_identity"}, "conditional-prefix-scan conformance SDK")
+    if (
+        sdk["repository"] != SDK_REPOSITORY
+        or sdk["implementation_pull_request"] != 7
+        or sdk["implementation_commit"] != PREFIX_SCAN_V1_SDK_IMPLEMENTATION_COMMIT
+        or sdk["merge_commit"] != PREFIX_SCAN_V1_SDK_MERGE_COMMIT
+    ):
+        raise ReleaseError("conditional-prefix-scan conformance source does not match the reviewed Go SDK implementation")
+    if value["status"] == "gated":
+        if sdk["release_identity"] is not None:
+            raise ReleaseError("gated conditional-prefix-scan conformance cannot name an SDK release identity")
+    else:
+        identity = require_exact_keys(sdk["release_identity"], {"tag", "commit"}, "conditional-prefix-scan SDK release identity")
+        if not isinstance(identity["tag"], str) or not TAG_RE.fullmatch(identity["tag"]) or not isinstance(identity["commit"], str) or not SHA_RE.fullmatch(identity["commit"]):
+            raise ReleaseError("conditional-prefix-scan SDK release identity must contain a tag and full commit SHA")
+
+    runtime = require_exact_keys(value["runtime"], {"feature", "capability"}, "conditional-prefix-scan conformance runtime")
+    capability = require_exact_keys(runtime["capability"], {"name", "version", "status"}, "conditional-prefix-scan conformance capability")
+    if runtime["feature"] != "storage_conditional_prefix_scan_v1" or capability != {"name": "storage_conditional_prefix_scan", "version": 1, "status": "available"}:
+        raise ReleaseError("conditional-prefix-scan conformance runtime contract is invalid")
+
+    expected_limits = {
+        "lease_ttl_ms": 300000,
+        "max_states": 4096,
+        "max_entries": 256,
+        "max_request_id_bytes": 128,
+        "max_prefix_bytes": 8192,
+        "max_key_bytes": 65536,
+        "max_request_bytes": 65536,
+        "max_value_bytes": 3 * 1024 * 1024,
+        "max_page_value_bytes": 8 * 1024 * 1024,
+        "max_response_bytes": 16 * 1024 * 1024,
+    }
+    if value["limits"] != expected_limits:
+        raise ReleaseError("conditional-prefix-scan conformance limits do not match v1")
+    vector = require_exact_keys(value["digest_vector"], {"request", "response", "sha256"}, "conditional-prefix-scan digest vector")
+    if vector["sha256"] != PREFIX_SCAN_V1_DIGEST or conditional_prefix_scan_response_digest(vector["request"], vector["response"]) != vector["sha256"]:
+        raise ReleaseError("conditional-prefix-scan digest vector does not match v1")
+    evidence = require_exact_keys(value["release_evidence"], {"required_targets", "requirements"}, "conditional-prefix-scan release evidence")
+    if evidence["required_targets"] != list(EXPECTED_TARGETS) or evidence["requirements"] != [
+        "portable_c_abi_build_manifest_smoke",
+        "conditional_prefix_scan_v1_core_conformance",
+        "sdk_digest_vector",
+        "runtime_native_probe",
+    ]:
+        raise ReleaseError("conditional-prefix-scan release evidence is incomplete")
+    if require_ready and value["status"] != "ready":
+        raise ReleaseError("conditional-prefix-scan conformance is gated")
+    return value
 
 
 def target_for(lock: dict[str, Any], platform: str) -> dict[str, Any]:
@@ -422,6 +630,7 @@ def validate_source(lock: dict[str, Any], core_root: Path) -> int:
             "TALON_NATIVE_ABI_VERSION": attestation["abi_version"],
             "TALON_STORAGE_CONDITIONAL_BATCH_VERSION": RUNTIME_CAPABILITY_CONTRACT["storage_conditional_batch"][0],
             "TALON_STORAGE_CONDITIONAL_TRANSACTION_VERSION": RUNTIME_CAPABILITY_CONTRACT["native_conditional_transaction_v2"][0],
+            "TALON_STORAGE_CONDITIONAL_PREFIX_SCAN_VERSION": RUNTIME_CAPABILITY_CONTRACT["storage_conditional_prefix_scan"][0],
             "TALON_REVISION_STREAM_VERSION": RUNTIME_CAPABILITY_CONTRACT["revision_stream"][0],
         }
         for macro, expected_version in expected_macros.items():
@@ -628,6 +837,11 @@ def file_record(path: Path, name: str | None = None) -> dict[str, Any]:
 def command_build(args: argparse.Namespace) -> None:
     lock = load_json(args.lock)
     validate_lock(lock, allow_gated=False)
+    validate_prefix_scan_v1_conformance(
+        getattr(args, "prefix_scan_conformance", PREFIX_SCAN_V1_CONFORMANCE_PATH),
+        require_ready=True,
+        expected_core=lock["core"],
+    )
     epoch = validate_source(lock, args.core_root)
     target = target_for(lock, args.platform)
     core_build_manifest = load_json(args.core_build_manifest)
@@ -985,6 +1199,11 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument("--allow-gated", action="store_true")
     validate.set_defaults(func=lambda args: validate_lock(load_json(args.lock), args.allow_gated))
 
+    conformance = commands.add_parser("validate-prefix-scan-conformance")
+    conformance.add_argument("--path", type=Path, default=PREFIX_SCAN_V1_CONFORMANCE_PATH)
+    conformance.add_argument("--require-ready", action="store_true")
+    conformance.set_defaults(func=lambda args: validate_prefix_scan_v1_conformance(args.path, require_ready=args.require_ready))
+
     build = commands.add_parser("build")
     build.add_argument("--lock", type=Path, required=True)
     build.add_argument("--core-root", type=Path, required=True)
@@ -1000,6 +1219,7 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--runner", required=True)
     build.add_argument("--rustc", required=True)
     build.add_argument("--cargo", required=True)
+    build.add_argument("--prefix-scan-conformance", type=Path, default=PREFIX_SCAN_V1_CONFORMANCE_PATH)
     build.set_defaults(func=command_build)
 
     sign = commands.add_parser("sign")

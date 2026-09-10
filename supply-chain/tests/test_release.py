@@ -39,6 +39,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             "\n".join([
                 "#define TALON_STORAGE_CONDITIONAL_BATCH_VERSION 1u",
                 "#define TALON_STORAGE_CONDITIONAL_TRANSACTION_VERSION 2u",
+                "#define TALON_STORAGE_CONDITIONAL_PREFIX_SCAN_VERSION 1u",
                 "#define TALON_REVISION_STREAM_VERSION 2u",
                 "#define TALON_NATIVE_ABI_VERSION 1u",
                 "#define TALON_NATIVE_BUILD_MANIFEST_VERSION 1u",
@@ -114,12 +115,19 @@ class ReleaseSupplyChainTest(unittest.TestCase):
                     "sql_tlv_v1",
                     "storage_conditional_batch_v1",
                     "native_conditional_transaction_v2",
+                    "storage_conditional_prefix_scan_v1",
                     "revision_stream_v1",
                     "revision_stream_v2_mmr_proof",
                 ],
                 "capabilities": [
                     {"name": "storage_conditional_batch", "version": 1, "status": "available", "reason": None},
                     {"name": "native_conditional_transaction_v2", "version": 2, "status": "available", "reason": None},
+                    {
+                        "name": "storage_conditional_prefix_scan",
+                        "version": 1,
+                        "status": "gated",
+                        "reason": release.PREFIX_SCAN_V1_GATED_REASON,
+                    },
                     {
                         "name": "revision_stream",
                         "version": 2,
@@ -149,6 +157,13 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         }
         self.lock = self.root / "lock.json"
         self.lock.write_bytes(release.canonical_json(lock))
+        conformance = release.load_json(release.PREFIX_SCAN_V1_CONFORMANCE_PATH)
+        conformance["status"] = "ready"
+        conformance["reason"] = None
+        conformance["source"]["release_identity"] = {"tag": "v1.2.3", "commit": self.core_commit}
+        conformance["sdk"]["release_identity"] = {"tag": "v1.2.3", "commit": self.bin_commit}
+        self.prefix_scan_conformance = self.root / "conditional-prefix-scan-v1.json"
+        self.prefix_scan_conformance.write_bytes(release.canonical_json(conformance))
         build_manifest = {
             "manifest_version": 1,
             "core_semver": "1.2.3",
@@ -197,6 +212,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             runner=target["runner"],
             rustc="rustc fixture",
             cargo="cargo fixture",
+            prefix_scan_conformance=self.prefix_scan_conformance,
         )
         release.command_build(args)
         return self.output / f"libtalon-core-{platform}.manifest.json"
@@ -538,10 +554,60 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             capability["name"]: capability
             for capability in lock["runtime_attestation"]["capabilities"]
         }
-        for name in ("revision_stream", "native_quorum", "server_ha_production_admission"):
+        for name in ("storage_conditional_prefix_scan", "revision_stream", "native_quorum", "server_ha_production_admission"):
             self.assertEqual(capabilities[name]["status"], "gated")
+        self.assertEqual(capabilities["storage_conditional_prefix_scan"]["version"], 1)
+        self.assertEqual(capabilities["storage_conditional_prefix_scan"]["reason"], release.PREFIX_SCAN_V1_GATED_REASON)
         self.assertEqual(capabilities["revision_stream"]["version"], 2)
         self.assertEqual(capabilities["revision_stream"]["reason"], release.REVISION_STREAM_V2_GATED_REASON)
+
+    def test_prefix_scan_v1_conformance_is_gated_and_digest_bound(self) -> None:
+        conformance_path = release.PREFIX_SCAN_V1_CONFORMANCE_PATH
+        conformance = release.validate_prefix_scan_v1_conformance(conformance_path)
+        self.assertEqual(conformance["status"], "gated")
+        with self.assertRaisesRegex(release.ReleaseError, "is gated"):
+            release.validate_prefix_scan_v1_conformance(conformance_path, require_ready=True)
+        conformance["digest_vector"]["response"]["entries"][0]["value"] = [116, 119, 111]
+        tampered = self.root / "tampered-prefix-scan-conformance.json"
+        tampered.write_bytes(release.canonical_json(conformance))
+        with self.assertRaisesRegex(release.ReleaseError, "digest vector"):
+            release.validate_prefix_scan_v1_conformance(tampered)
+        conformance = release.load_json(conformance_path)
+        conformance["source"]["merge_commit"] = "0" * 40
+        tampered.write_bytes(release.canonical_json(conformance))
+        with self.assertRaisesRegex(release.ReleaseError, "reviewed Core implementation"):
+            release.validate_prefix_scan_v1_conformance(tampered)
+        conformance = release.load_json(conformance_path)
+        conformance["sdk"]["merge_commit"] = "0" * 40
+        tampered.write_bytes(release.canonical_json(conformance))
+        with self.assertRaisesRegex(release.ReleaseError, "reviewed Go SDK implementation"):
+            release.validate_prefix_scan_v1_conformance(tampered)
+
+    def test_release_build_requires_ready_prefix_scan_conformance(self) -> None:
+        conformance = release.load_json(self.prefix_scan_conformance)
+        conformance["status"] = "gated"
+        conformance["reason"] = release.PREFIX_SCAN_V1_GATED_REASON
+        conformance["source"]["release_identity"] = None
+        conformance["sdk"]["release_identity"] = None
+        self.prefix_scan_conformance.write_bytes(release.canonical_json(conformance))
+        with self.assertRaisesRegex(release.ReleaseError, "conformance is gated"):
+            self.build()
+
+    def test_prefix_scan_runtime_contract_cannot_be_promoted_or_deleted(self) -> None:
+        lock = release.load_json(self.lock)
+        capability = next(
+            item
+            for item in lock["runtime_attestation"]["capabilities"]
+            if item["name"] == "storage_conditional_prefix_scan"
+        )
+        capability["status"] = "available"
+        capability["reason"] = None
+        with self.assertRaisesRegex(release.ReleaseError, "storage_conditional_prefix_scan"):
+            release.validate_lock(lock, allow_gated=False)
+        lock = release.load_json(self.lock)
+        lock["runtime_attestation"]["features"].remove("storage_conditional_prefix_scan_v1")
+        with self.assertRaisesRegex(release.ReleaseError, "exactly match"):
+            release.validate_lock(lock, allow_gated=False)
 
     def test_tracked_old_outer_abi_cannot_be_promoted_by_flipping_release_gates(self) -> None:
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")

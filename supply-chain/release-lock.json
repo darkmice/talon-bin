@@ -31,7 +31,7 @@
   },
   "runtime_attestation": {
     "status": "gated",
-    "reason": "The pinned clean Core commit predates talon_build_manifest. These fields record the frozen SDK revision-stream v2 runtime contract only; they do not promote the dirty development checkout into a release identity.",
+    "reason": "The pinned clean Core commit predates talon_build_manifest. These fields record frozen revision-stream v2 and conditional-prefix-scan v1 contracts only; they do not promote a development checkout or untagged Core merge into a release identity.",
     "manifest_version": 1,
     "abi_profile": "talon-native-c",
     "abi_version": 1,
@@ -66,6 +66,7 @@
       "sql_tlv_v1",
       "storage_conditional_batch_v1",
       "native_conditional_transaction_v2",
+      "storage_conditional_prefix_scan_v1",
       "revision_stream_v1",
       "revision_stream_v2_mmr_proof"
     ],
@@ -81,6 +82,12 @@
         "version": 2,
         "status": "available",
         "reason": null
+      },
+      {
+        "name": "storage_conditional_prefix_scan",
+        "version": 1,
+        "status": "gated",
+        "reason": "v1 has merged Core and Go SDK implementations but no immutable Core tag, SDK release tag, cross-target digest conformance, or four-target release evidence"
       },
       {
         "name": "revision_stream",
