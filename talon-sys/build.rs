@@ -79,7 +79,7 @@ fn main() {
 
     // 预编译库版本 — 仅在底层 C 库变更时更新。下载地址固定到版本，
     // 归档哈希由调用方/签名 manifest 提供，不能从 tag 推导。
-    const TALON_LIB_VERSION: &str = "0.1.48";
+    const TALON_LIB_VERSION: &str = "0.1.49";
     let archive_prefix = if has_evocore {
         "libtalon-evocore"
     } else {
