@@ -23,7 +23,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: enterprise-core-promotion-v0.1.53
+  group: enterprise-core-promotion-${{ inputs.source_commit }}
   cancel-in-progress: false
 
 jobs:
@@ -75,6 +75,9 @@ jobs:
             supply-chain/release-lock.json supply-chain/conformance/conditional-prefix-scan-v1.json \
             supply-chain/tools/release.py supply-chain/tools/package_go_runtime.py
           test "$(git -C talon-bin ls-remote origin refs/heads/main | cut -f1)" = "$(git -C talon-bin rev-parse HEAD)"
+          release_tag="$(python3 -c 'import json; print(json.load(open("talon-bin/supply-chain/release-lock.json"))["release_tag"])')"
+          [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
 
       - name: Install Go for staged module check
         uses: actions/setup-go@v5
@@ -114,7 +117,7 @@ jobs:
       - name: Upload small review evidence
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
         with:
-          name: talon-v0.1.53-promotion-review
+          name: talon-enterprise-core-promotion-review
           path: |
             release/SHA256SUMS.txt
             signed/talon-core-go-runtime-release/identity.json
@@ -125,21 +128,24 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if gh release view v0.1.53 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            echo '::error::v0.1.53 release already exists'
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::$RELEASE_TAG release already exists"
             exit 1
           fi
-          if git -C talon-bin ls-remote --exit-code origin refs/tags/v0.1.53 refs/heads/codex/go-runtime-v0.1.53 >/dev/null; then
+          if git -C talon-bin ls-remote --exit-code origin "refs/tags/$RELEASE_TAG" "refs/heads/codex/go-runtime-$RELEASE_TAG" >/dev/null; then
             echo '::error::release tag or module branch already exists'
             exit 1
           fi
-          git -C talon-bin switch -c codex/go-runtime-v0.1.53
+          git -C talon-bin switch -c "codex/go-runtime-$RELEASE_TAG"
           git -C talon-bin rm -- 'go-runtime/native/*/UNRELEASED'
           cp -R signed/talon-core-go-runtime-release/. talon-bin/go-runtime/
-          cat > talon-bin/go-runtime/README.md <<'EOF'
-          # Signed Talon Core Go runtime
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          Path('talon-bin/go-runtime/README.md').write_text(f'''# Signed Talon Core Go runtime
 
-          `v0.1.53` embeds the four Ed25519-signed Talon Core runtime artifacts.
+          `{tag}` embeds the four Ed25519-signed Talon Core runtime artifacts.
           Build tags embed only the current platform. `talon-sdk-go` checks the
           pinned signing key, exact release and source identity, every archive
           member, and the loaded Core self-manifest before opening a database.
@@ -147,43 +153,50 @@ jobs:
           The runtime assets are bound to the `talon-bin` source commit recorded
           in `identity.json`; this module's nested tag names the later commit
           containing those reviewed assets.
-          EOF
+          ''', encoding='utf-8')
+          PY
           (cd talon-bin/go-runtime && go test ./...)
           git -C talon-bin add go-runtime
           git -C talon-bin diff --cached --check
           git -C talon-bin config user.name 'github-actions[bot]'
           git -C talon-bin config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git -C talon-bin commit -m 'release(go-runtime): embed signed Core v0.1.53'
-          git -C talon-bin push origin HEAD:refs/heads/codex/go-runtime-v0.1.53
+          git -C talon-bin commit -m "release(go-runtime): embed signed Core $RELEASE_TAG"
+          git -C talon-bin push origin "HEAD:refs/heads/codex/go-runtime-$RELEASE_TAG"
 
       - name: Create and verify signed GitHub Release draft
         if: inputs.mode == 'publish'
         shell: bash
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/release-notes.md" <<EOF
-          # Talon v0.1.53 signed Enterprise Core
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          lock = json.loads(Path('talon-bin/supply-chain/release-lock.json').read_text())
+          tag = os.environ['RELEASE_TAG']
+          notes = f'''# Talon {tag} signed Enterprise Core
 
           Four platform-specific full and runtime-only Core bundles, signed with Ed25519.
-          Core: \`v0.1.1\` at \`6010d748aebd3c4e595534ed4a9e959e7e5334cf\`.
-          Talon-bin source: \`$SOURCE_COMMIT\`.
-          Signing public-key DER SHA-256: \`617eca89ae8b1e824b5ae764cee171f98eff07e16123e7a0dbead73425b1fa2c\`.
-          Build and four-platform embedded SDK acceptance: https://github.com/$GITHUB_REPOSITORY/actions/runs/$RELEASE_RUN_ID
+          Core: `{lock['core']['tag']}` at `{lock['core']['commit']}`.
+          Talon-bin source: `{os.environ['SOURCE_COMMIT']}`.
+          Signing public-key DER SHA-256: `{lock['signing']['public_key_sha256']}`.
+          Build and four-platform embedded SDK acceptance: https://github.com/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['RELEASE_RUN_ID']}
 
-          Verify the signed manifest and every archive member against your independently pinned key and source identity before loading native code. \`SHA256SUMS.txt\` covers the published assets except itself. The separately versioned Go runtime module is published as \`go-runtime/v0.1.53\` after its module branch is reviewed and merged.
-          EOF
-          gh release create v0.1.53 release/* \
+          Verify the signed manifest and every archive member against your independently pinned key and source identity before loading native code. `SHA256SUMS.txt` covers the published assets except itself. The separately versioned Go runtime module is published as `go-runtime/{tag}` after its module branch is reviewed and merged.
+          '''
+          Path(os.environ['RUNNER_TEMP'], 'release-notes.md').write_text(notes, encoding='utf-8')
+          PY
+          gh release create "$RELEASE_TAG" release/* \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_COMMIT" \
             --draft \
-            --title 'Talon v0.1.53 signed Enterprise Core' \
+            --title "Talon $RELEASE_TAG signed Enterprise Core" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v0.1.53" > "$RUNNER_TEMP/published-release.json"
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/published-release.json"
           python3 - <<'PY'
           import hashlib, json, os
           from pathlib import Path
           release = json.loads(Path(os.environ['RUNNER_TEMP'], 'published-release.json').read_text())
-          assert release['draft'] and release['tag_name'] == 'v0.1.53'
+          assert release['draft'] and release['tag_name'] == os.environ['RELEASE_TAG']
           local = {path.name: path for path in Path('release').iterdir() if path.is_file()}
           remote = {asset['name']: asset for asset in release['assets']}
           assert local.keys() == remote.keys(), (local.keys(), remote.keys())
@@ -196,5 +209,5 @@ jobs:
               assert remote[name]['digest'] == 'sha256:' + digest.hexdigest(), name
           print(f'{len(local)} remote release asset digests verified')
           PY
-          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/v0.1.53" --jq .object.sha)" = "$SOURCE_COMMIT"
-          gh release edit v0.1.53 --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)" = "$SOURCE_COMMIT"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest

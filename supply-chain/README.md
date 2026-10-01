@@ -125,7 +125,7 @@ Production generation requires a release-ready lock and an Ed25519 private key
 provided to Actions as `TALON_RELEASE_SIGNING_KEY_PEM_B64`. The corresponding
 DER public-key SHA-256 must be pinned in the lock before dispatch. A clean,
 tagged Core whose ABI matches `runtime_attestation` is also required. The
-current `v0.1.53` lock has been admitted after the four-target candidate run;
+current `v0.1.54` lock has been admitted after the four-target candidate run;
 publication still requires release mode from merged `main` and review of its
 new signed artifacts.
 
