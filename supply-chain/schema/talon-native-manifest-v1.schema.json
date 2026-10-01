@@ -92,11 +92,15 @@
       "type": "object",
       "required": ["kind", "platform", "archive", "files"],
       "properties": {
-        "kind": {"const": "talon-core-native-library"},
+        "kind": {"enum": ["talon-core-native-library", "talon-core-native-runtime"]},
         "platform": {"enum": ["linux-amd64", "linux-arm64", "macos-amd64", "macos-arm64"]},
         "archive": {"$ref": "#/$defs/fileRecord"},
-        "files": {"type": "array", "minItems": 5, "maxItems": 5, "uniqueItems": true, "items": {"$ref": "#/$defs/fileRecord"}}
+        "files": {"type": "array", "minItems": 4, "maxItems": 5, "uniqueItems": true, "items": {"$ref": "#/$defs/fileRecord"}}
       },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "talon-core-native-library"}}}, "then": {"properties": {"files": {"minItems": 5}}}},
+        {"if": {"properties": {"kind": {"const": "talon-core-native-runtime"}}}, "then": {"properties": {"files": {"maxItems": 4}}}}
+      ],
       "additionalProperties": false
     },
     "materials": {
@@ -121,7 +125,7 @@
           "not": {"const": "UNASSIGNED"}
         },
         "public_key_sha256": {"$ref": "#/$defs/sha256"},
-        "signature": {"type": "string", "pattern": "^libtalon-core-(linux-amd64|linux-arm64|macos-amd64|macos-arm64)\\.manifest\\.json\\.sig$"}
+        "signature": {"type": "string", "pattern": "^libtalon-core-(runtime-)?(linux-amd64|linux-arm64|macos-amd64|macos-arm64)\\.manifest\\.json\\.sig$"}
       },
       "additionalProperties": false
     },

@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -168,7 +169,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def build(self, platform: str = "linux-amd64") -> Path:
+    def build(self, platform: str = "linux-amd64", artifact_profile: str = "full", candidate: bool = False) -> Path:
         target = release.EXPECTED_TARGETS[platform]
         build_manifest = release.load_json(self.core_build_manifest)
         build_manifest["target"] = target["triple"]
@@ -184,6 +185,8 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             public_key=self.public_key,
             output=self.output,
             platform=platform,
+            artifact_profile=artifact_profile,
+            candidate=candidate,
             build_source="test",
             workflow_run_id="1",
             runner=target["runner"],
@@ -192,7 +195,8 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             prefix_scan_conformance=self.prefix_scan_conformance,
         )
         release.command_build(args)
-        return self.output / f"libtalon-core-{platform}.manifest.json"
+        prefix = "libtalon-core-runtime" if artifact_profile == "runtime" else "libtalon-core"
+        return self.output / f"{prefix}-{platform}.manifest.json"
 
     def commit_core_header_change(self, old: str, new: str) -> dict:
         header = self.core / "include" / "talon.h"
@@ -271,6 +275,81 @@ class ReleaseSupplyChainTest(unittest.TestCase):
                 value["build"]["runner"] = "untrusted-runner"
                 with self.assertRaisesRegex(release.ReleaseError, "platform does not match"):
                     release.validate_manifest(value)
+
+    def test_runtime_only_bundle_excludes_static_library_and_verifies(self) -> None:
+        schema = release.load_json(MODULE_PATH.parents[1] / "schema" / "talon-native-manifest-v1.schema.json")
+        validator = jsonschema.Draft202012Validator(schema)
+        for platform, target in release.EXPECTED_TARGETS.items():
+            with self.subTest(platform=platform):
+                manifest = self.build(platform, artifact_profile="runtime")
+                value = release.load_json(manifest)
+                validator.validate(value)
+                self.assertEqual(value["artifact"]["kind"], "talon-core-native-runtime")
+                self.assertEqual(
+                    {record["path"] for record in value["artifact"]["files"]},
+                    {target["dynamic_library"], "talon.h", "LICENSE.core", "NOTICE"},
+                )
+                signature = Path(str(manifest) + ".sig")
+                release.command_sign(argparse.Namespace(manifest=manifest, private_key=self.private_key, signature=signature))
+                release.command_verify(self.verify_args(manifest, signature))
+                args = self.verify_args(manifest, signature)
+                args.output = self.output / f"{platform}-runtime-offline.tar.gz"
+                release.command_offline(args)
+                self.assertTrue(args.output.is_file())
+
+                value["artifact"]["files"].append({"path": target["static_library"], "size": 1, "sha256": "0" * 64})
+                with self.assertRaisesRegex(release.ReleaseError, "incomplete"):
+                    release.validate_manifest(value)
+
+    def test_go_runtime_module_requires_four_verified_signed_bundles(self) -> None:
+        signed = self.root / "signed"
+        for platform in release.EXPECTED_TARGETS:
+            manifest = self.build(platform, artifact_profile="runtime")
+            signature = Path(str(manifest) + ".sig")
+            release.command_sign(argparse.Namespace(manifest=manifest, private_key=self.private_key, signature=signature))
+            value = release.load_json(manifest)
+            base = signed / platform
+            base.mkdir(parents=True)
+            names = [manifest.name, signature.name, value["artifact"]["archive"]["path"]]
+            names += [record["path"] for record in value["materials"].values()]
+            for name in set(names):
+                shutil.copyfile(self.output / name, base / name)
+            shutil.copyfile(self.public_key, base / "talon-release-public.pem")
+        script = MODULE_PATH.parents[1] / "tools" / "package_go_runtime.py"
+        output = self.root / "staged-go-runtime"
+        command(
+            sys.executable, str(script), "--lock", str(self.lock),
+            "--talon-bin-commit", self.bin_commit, "--signed-root", str(signed),
+            "--template", str(MODULE_PATH.parents[2] / "go-runtime"),
+            "--license", str(self.bin / "README.md"), "--output", str(output),
+        )
+        self.assertEqual(json.loads((output / "identity.json").read_text())["status"], "ready")
+        self.assertEqual(len(list((output / "native").glob("*/*.manifest.json"))), 4)
+        self.assertEqual(list((output / "native").rglob("*.a")), [])
+        command("go", "test", "./...", cwd=output)
+
+        candidate_lock = release.load_json(self.lock)
+        candidate_lock["runtime_attestation"]["status"] = "gated"
+        candidate_path = self.root / "candidate-lock.json"
+        candidate_path.write_bytes(release.canonical_json(candidate_lock))
+        candidate_output = self.root / "candidate-go-runtime"
+        command(
+            sys.executable, str(script), "--candidate", "--lock", str(candidate_path),
+            "--talon-bin-commit", self.bin_commit, "--signed-root", str(signed),
+            "--template", str(MODULE_PATH.parents[2] / "go-runtime"),
+            "--license", str(self.bin / "README.md"), "--output", str(candidate_output),
+        )
+        self.assertEqual(json.loads((candidate_output / "identity.json").read_text())["status"], "gated")
+
+        (signed / "linux-arm64" / "libtalon-core-runtime-linux-arm64.manifest.json.sig").write_bytes(b"tampered")
+        with self.assertRaises(subprocess.CalledProcessError):
+            command(
+                sys.executable, str(script), "--lock", str(self.lock),
+                "--talon-bin-commit", self.bin_commit, "--signed-root", str(signed),
+                "--template", str(MODULE_PATH.parents[2] / "go-runtime"),
+                "--license", str(self.bin / "README.md"), "--output", str(self.root / "rejected-module"),
+            )
+        self.assertFalse((self.root / "rejected-module").exists())
 
     def test_json_schema_accepts_generator_output_and_rejects_contract_drift(self) -> None:
         schema = release.load_json(MODULE_PATH.parents[1] / "schema" / "talon-native-manifest-v1.schema.json")
@@ -518,14 +597,16 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "UNRELEASED"):
             self.build()
 
-    def test_tracked_development_lock_keeps_unreleased_gates(self) -> None:
+    def test_tracked_release_lock_preserves_independent_capability_gates(self) -> None:
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
-        self.assertEqual(lock["release_tag"], "UNRELEASED")
+        self.assertEqual(lock["release_tag"], "v0.1.53")
         self.assertEqual(lock["core"]["tag"], "v0.1.1")
-        self.assertEqual(lock["signing"]["status"], "gated")
-        self.assertEqual(lock["signing"]["key_id"], "UNASSIGNED")
-        self.assertIsNone(lock["signing"]["public_key_sha256"])
-        self.assertEqual(lock["runtime_attestation"]["status"], "gated")
+        self.assertEqual(lock["signing"]["status"], "ready")
+        self.assertNotEqual(lock["signing"]["key_id"], "UNASSIGNED")
+        self.assertRegex(lock["signing"]["public_key_sha256"], release.HASH_RE)
+        release.validate_candidate_lock(lock)
+        release.validate_lock(lock, allow_gated=False)
+        self.assertEqual(lock["runtime_attestation"]["status"], "ready")
         self.assertEqual(lock["runtime_attestation"]["features"], list(release.RUNTIME_FEATURE_CONTRACT))
         capabilities = {
             capability["name"]: capability
@@ -539,12 +620,22 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         self.assertEqual(capabilities["revision_stream"]["version"], 2)
         self.assertEqual(capabilities["revision_stream"]["reason"], release.REVISION_STREAM_V2_GATED_REASON)
 
-    def test_prefix_scan_v1_conformance_is_gated_and_digest_bound(self) -> None:
+    def test_prefix_scan_v1_conformance_is_ready_and_digest_bound(self) -> None:
         conformance_path = release.PREFIX_SCAN_V1_CONFORMANCE_PATH
-        conformance = release.validate_prefix_scan_v1_conformance(conformance_path)
-        self.assertEqual(conformance["status"], "gated")
+        lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
+        conformance = release.validate_prefix_scan_v1_conformance(
+            conformance_path, require_ready=True, expected_core=lock["core"]
+        )
+        self.assertEqual(conformance["status"], "ready")
+        gated = copy.deepcopy(conformance)
+        gated["status"] = "gated"
+        gated["reason"] = release.PREFIX_SCAN_V1_GATED_REASON
+        gated["source"]["release_identity"] = None
+        gated["sdk"]["release_identity"] = None
+        gated_path = self.root / "gated-prefix-scan-conformance.json"
+        gated_path.write_bytes(release.canonical_json(gated))
         with self.assertRaisesRegex(release.ReleaseError, "is gated"):
-            release.validate_prefix_scan_v1_conformance(conformance_path, require_ready=True)
+            release.validate_prefix_scan_v1_conformance(gated_path, require_ready=True)
         conformance["digest_vector"]["response"]["entries"][0]["value"] = [116, 119, 111]
         tampered = self.root / "tampered-prefix-scan-conformance.json"
         tampered.write_bytes(release.canonical_json(conformance))
@@ -571,6 +662,26 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "conformance is gated"):
             self.build()
 
+    def test_signed_candidate_build_keeps_final_release_gated(self) -> None:
+        lock = release.load_json(self.lock)
+        lock["runtime_attestation"]["status"] = "gated"
+        self.lock.write_bytes(release.canonical_json(lock))
+        conformance = release.load_json(self.prefix_scan_conformance)
+        conformance["status"] = "gated"
+        conformance["reason"] = release.PREFIX_SCAN_V1_GATED_REASON
+        conformance["source"]["release_identity"] = None
+        conformance["sdk"]["release_identity"] = None
+        self.prefix_scan_conformance.write_bytes(release.canonical_json(conformance))
+        with self.assertRaisesRegex(release.ReleaseError, "binary self-attestation is gated"):
+            self.build()
+        manifest = self.build(artifact_profile="runtime", candidate=True)
+        signature = Path(str(manifest) + ".sig")
+        release.command_sign(argparse.Namespace(manifest=manifest, private_key=self.private_key, signature=signature))
+        release.command_verify(self.verify_args(manifest, signature))
+        lock["signing"]["status"] = "gated"
+        with self.assertRaisesRegex(release.ReleaseError, "pinned ready signing"):
+            release.validate_candidate_lock(lock)
+
     def test_prefix_scan_runtime_contract_cannot_be_promoted_or_deleted(self) -> None:
         lock = release.load_json(self.lock)
         capability = next(
@@ -587,11 +698,11 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "exactly match"):
             release.validate_lock(lock, allow_gated=False)
 
-    def test_tracked_lock_cannot_be_promoted_without_signing_identity(self) -> None:
+    def test_tracked_lock_cannot_be_promoted_without_runtime_attestation(self) -> None:
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
-        lock["release_tag"] = "v9.9.9"
-        lock["runtime_attestation"]["status"] = "ready"
-        with self.assertRaisesRegex(release.ReleaseError, "release signing is gated"):
+        lock["runtime_attestation"]["status"] = "gated"
+        lock["runtime_attestation"]["reason"] = "fixture lacks runtime attestation"
+        with self.assertRaisesRegex(release.ReleaseError, "binary self-attestation is gated"):
             release.validate_lock(lock, allow_gated=False)
 
     def test_runtime_required_symbol_drift_is_rejected(self) -> None:

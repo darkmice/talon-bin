@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "release_tag": "UNRELEASED",
+  "release_tag": "v0.1.53",
   "channel": "enterprise-core",
   "talon_bin_source": "workflow HEAD recorded in each signed manifest; a commit cannot hash a lock file that contains its own hash",
   "core": {
@@ -49,8 +49,8 @@
     }
   },
   "runtime_attestation": {
-    "status": "gated",
-    "reason": "Tagged Core v0.1.1 exposes build manifest v2; the reviewed release contract is updated, but the signing identity and four-target release candidate are pending.",
+    "status": "ready",
+    "reason": "Four-target build-manifest challenges, C ABI smoke, Core prefix-scan conformance, and signed SDK native acceptance passed in Actions run 36878054786; release mode repeats these checks from main.",
     "manifest_version": 2,
     "abi_profile": "talon-native-c",
     "abi_version": 1,
@@ -209,11 +209,11 @@
     "reproducibility": "exact source and toolchain with deterministic packaging; native code bytes are not claimed reproducible across mutable hosted runner images"
   },
   "signing": {
-    "status": "gated",
+    "status": "ready",
     "algorithm": "Ed25519",
-    "key_id": "UNASSIGNED",
-    "public_key_sha256": null,
-    "reason": "A production release public key and matching GitHub secret have not been provisioned."
+    "key_id": "talon-enterprise-core-2026-10-01",
+    "public_key_sha256": "617eca89ae8b1e824b5ae764cee171f98eff07e16123e7a0dbead73425b1fa2c",
+    "reason": "Production Ed25519 public key is pinned and the matching GitHub Actions secret is configured; four-target candidate admission passed in Actions run 36878054786."
   },
   "targets": [
     {
