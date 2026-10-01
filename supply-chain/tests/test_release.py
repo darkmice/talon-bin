@@ -597,7 +597,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "UNRELEASED"):
             self.build()
 
-    def test_tracked_development_lock_keeps_unreleased_gates(self) -> None:
+    def test_tracked_release_lock_preserves_independent_capability_gates(self) -> None:
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
         self.assertEqual(lock["release_tag"], "v0.1.53")
         self.assertEqual(lock["core"]["tag"], "v0.1.1")
@@ -605,7 +605,8 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         self.assertNotEqual(lock["signing"]["key_id"], "UNASSIGNED")
         self.assertRegex(lock["signing"]["public_key_sha256"], release.HASH_RE)
         release.validate_candidate_lock(lock)
-        self.assertEqual(lock["runtime_attestation"]["status"], "gated")
+        release.validate_lock(lock, allow_gated=False)
+        self.assertEqual(lock["runtime_attestation"]["status"], "ready")
         self.assertEqual(lock["runtime_attestation"]["features"], list(release.RUNTIME_FEATURE_CONTRACT))
         capabilities = {
             capability["name"]: capability
@@ -619,12 +620,22 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         self.assertEqual(capabilities["revision_stream"]["version"], 2)
         self.assertEqual(capabilities["revision_stream"]["reason"], release.REVISION_STREAM_V2_GATED_REASON)
 
-    def test_prefix_scan_v1_conformance_is_gated_and_digest_bound(self) -> None:
+    def test_prefix_scan_v1_conformance_is_ready_and_digest_bound(self) -> None:
         conformance_path = release.PREFIX_SCAN_V1_CONFORMANCE_PATH
-        conformance = release.validate_prefix_scan_v1_conformance(conformance_path)
-        self.assertEqual(conformance["status"], "gated")
+        lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
+        conformance = release.validate_prefix_scan_v1_conformance(
+            conformance_path, require_ready=True, expected_core=lock["core"]
+        )
+        self.assertEqual(conformance["status"], "ready")
+        gated = copy.deepcopy(conformance)
+        gated["status"] = "gated"
+        gated["reason"] = release.PREFIX_SCAN_V1_GATED_REASON
+        gated["source"]["release_identity"] = None
+        gated["sdk"]["release_identity"] = None
+        gated_path = self.root / "gated-prefix-scan-conformance.json"
+        gated_path.write_bytes(release.canonical_json(gated))
         with self.assertRaisesRegex(release.ReleaseError, "is gated"):
-            release.validate_prefix_scan_v1_conformance(conformance_path, require_ready=True)
+            release.validate_prefix_scan_v1_conformance(gated_path, require_ready=True)
         conformance["digest_vector"]["response"]["entries"][0]["value"] = [116, 119, 111]
         tampered = self.root / "tampered-prefix-scan-conformance.json"
         tampered.write_bytes(release.canonical_json(conformance))
@@ -689,7 +700,8 @@ class ReleaseSupplyChainTest(unittest.TestCase):
 
     def test_tracked_lock_cannot_be_promoted_without_runtime_attestation(self) -> None:
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
-        lock["release_tag"] = "v9.9.9"
+        lock["runtime_attestation"]["status"] = "gated"
+        lock["runtime_attestation"]["reason"] = "fixture lacks runtime attestation"
         with self.assertRaisesRegex(release.ReleaseError, "binary self-attestation is gated"):
             release.validate_lock(lock, allow_gated=False)
 
