@@ -47,12 +47,14 @@ on each target while conformance remains gated. The staged Go module identity
 stays `gated`. Once the four-target C ABI, SDK native, and prefix-scan evidence
 has been reviewed and the lock and conformance are admitted, dispatch
 `release_mode=release` from `main`. That mode requires the ready lock and
-conformance and stages a `ready` module for separate publication under an
-immutable nested-module tag.
+conformance, stages a `ready` module, and exercises SDK `talon.Open` with that
+module on four native runners before separate publication under an immutable
+nested-module tag.
 
 The producer matrix builds four artifact targets. Each signed runtime artifact
-is loaded by the SDK on its matching native runner; the Core C ABI smoke and
-SDK prefix-scan digest vector run on those targets as separate checks.
+is loaded by the SDK on its matching native runner; the Core C ABI smoke, Core
+native prefix-scan tests, and SDK prefix-scan digest vector run on those targets
+as separate checks.
 
 ## SDK runtime verification contract
 

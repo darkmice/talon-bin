@@ -458,7 +458,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           repository: darkmice/talon-sdk-go
-          ref: 4698cdfbc6ab89cb0892c1dc23a1d1459459670b
+          ref: 5d9e2f9c17b9ef50f08b8ea075688e3b686548ec
           path: talon-sdk-go
 
       - name: Install Go
@@ -512,3 +512,39 @@ jobs:
           go test . -count=1 -ldflags=-linkmode=external \
             -run 'TestParameterizedExecAndQuery|TestKVPublicResultsFromSignedNative|TestNativeKVBinaryRoundTripFromSignedNative'
           go test ./internal/serverprotocol -count=1 -run '^TestConditionalPrefixScanCoreDigestVector$'
+
+  sdk-embedded-release:
+    if: github.event_name == 'workflow_dispatch' && inputs.release_mode == 'release'
+    needs: [stage-go-runtime, sdk-native-candidate]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout exact SDK candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: darkmice/talon-sdk-go
+          ref: 5d9e2f9c17b9ef50f08b8ea075688e3b686548ec
+          path: talon-sdk-go
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Download release-ready Go runtime module
+        uses: actions/download-artifact@v4
+        with:
+          name: talon-core-go-runtime-release
+          path: staged-go-runtime
+
+      - name: Exercise public embedded Open without native policy
+        working-directory: talon-sdk-go
+        shell: bash
+        env:
+          TALON_TEST_EMBEDDED_NATIVE: '1'
+        run: |
+          go mod edit -replace github.com/darkmice/talon-bin/go-runtime=../staged-go-runtime
+          go test . -count=1 -ldflags=-linkmode=external -run '^TestEmbeddedSignedRuntimeOpen$'
