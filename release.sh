@@ -1,123 +1,62 @@
 #!/usr/bin/env bash
-# ─────────────────────────────────────────────────────────────
-# Talon-Bin Release Script
-# 用法: ./release.sh v0.1.24
-# ─────────────────────────────────────────────────────────────
+# Dispatch the legacy unsigned bundle release from an immutable set of sources.
+# The GitHub workflow creates the tag after all platform builds pass.
 set -euo pipefail
 
-# ── 颜色 ──
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-NC='\033[0m'
+usage() {
+  echo "Usage: $0 vX.Y.Z CORE AI LLM AGENT TRACE SANDBOX EVOCORE SESSION BLOCK" >&2
+  echo "Pass full lowercase 40-character commit SHAs for every component." >&2
+  exit 2
+}
 
-log()  { echo -e "${GREEN}[✓]${NC} $*"; }
-warn() { echo -e "${YELLOW}[!]${NC} $*"; }
-err()  { echo -e "${RED}[✗]${NC} $*" >&2; exit 1; }
-step() { echo -e "\n${CYAN}══ $* ══${NC}"; }
+[[ $# -eq 10 ]] || usage
+release_tag="$1"
+shift
+[[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || usage
+for source_commit in "$@"; do
+  [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || usage
+done
 
-# ── 参数校验 ──
-TAG="${1:-}"
-if [[ -z "$TAG" ]]; then
-    echo "用法: $0 <version-tag>"
-    echo "示例: $0 v0.1.24"
-    exit 1
-fi
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+cd "$script_dir"
+[[ "$(git branch --show-current)" == main ]] || {
+  echo "Release source must be checked out on main." >&2
+  exit 1
+}
+[[ -z "$(git status --porcelain=v1)" ]] || {
+  echo "Release source has uncommitted changes." >&2
+  exit 1
+}
+remote_main="$(git ls-remote origin refs/heads/main | cut -f1)"
+[[ -n "$remote_main" && "$(git rev-parse HEAD)" == "$remote_main" ]] || {
+  echo "Local main does not match origin/main." >&2
+  exit 1
+}
+version="${release_tag#v}"
+python3 - "$version" <<'PY'
+import pathlib
+import re
+import sys
+import tomllib
 
-# 校验 tag 格式
-if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    err "Tag 格式错误: $TAG (期望 vX.Y.Z)"
-fi
+version = sys.argv[1]
+cargo = tomllib.loads(pathlib.Path("talon-sys/Cargo.toml").read_text())
+source = pathlib.Path("talon-sys/build.rs").read_text()
+match = re.search(r'^\s*const TALON_LIB_VERSION: &str = "([^"]+)";\s*$', source, re.MULTILINE)
+if cargo["package"]["version"] != version or match is None or match.group(1) != version:
+    raise SystemExit(f"talon-sys Cargo/build.rs versions must both be {version} before dispatch")
+PY
 
-VERSION="${TAG#v}"  # 去掉 v 前缀: v0.1.24 → 0.1.24
-
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
-
-# ── 代理配置 ──
-export https_proxy=http://127.0.0.1:7890
-export http_proxy=http://127.0.0.1:7890
-export all_proxy=socks5://127.0.0.1:7890
-
-# ── Step 1: 检查工作区状态 ──
-step "检查 Git 状态"
-
-if [[ -n "$(git status --porcelain)" ]]; then
-    warn "talon-bin 有未提交的更改:"
-    git status --short
-    read -p "继续发布？[y/N] " -n 1 -r
-    echo
-    [[ $REPLY =~ ^[Yy]$ ]] || exit 0
-fi
-
-# 确保在 main 分支
-BRANCH="$(git rev-parse --abbrev-ref HEAD)"
-if [[ "$BRANCH" != "main" ]]; then
-    err "当前在 $BRANCH 分支，请切换到 main: git checkout main"
-fi
-
-# 检查 tag 是否已存在
-if git rev-parse "$TAG" >/dev/null 2>&1; then
-    err "Tag $TAG 已存在！请使用新的版本号。"
-fi
-
-# ── Step 2: 更新版本号 ──
-step "更新版本号 → $VERSION"
-
-# talon-sys/Cargo.toml
-CARGO_TOML="$SCRIPT_DIR/talon-sys/Cargo.toml"
-if grep -q "version = \"$VERSION\"" "$CARGO_TOML"; then
-    log "Cargo.toml 已是 $VERSION"
-else
-    sed -i '' "s/^version = \".*\"/version = \"$VERSION\"/" "$CARGO_TOML"
-    log "Cargo.toml → $VERSION"
-fi
-
-# talon-sys/build.rs (TALON_LIB_VERSION)
-BUILD_RS="$SCRIPT_DIR/talon-sys/build.rs"
-if grep -q "TALON_LIB_VERSION: &str = \"$VERSION\"" "$BUILD_RS"; then
-    log "build.rs TALON_LIB_VERSION 已是 $VERSION"
-else
-    perl -0pi -e 's@^\s*const TALON_LIB_VERSION:.*?;$@        const TALON_LIB_VERSION: &str = "'"$VERSION"'";@m' "$BUILD_RS"
-    grep -q "TALON_LIB_VERSION: &str = \"$VERSION\"" "$BUILD_RS" \
-        || err "未能更新 build.rs 中的 TALON_LIB_VERSION"
-    log "build.rs TALON_LIB_VERSION → $VERSION"
-fi
-
-# ── Step 3: 提交 ──
-step "提交更改"
-
-git add -A
-if git diff --cached --quiet; then
-    log "无需提交（所有更改已在上一次 commit 中）"
-else
-    git commit -m "feat(sys): bump $TAG — pre-built binary release"
-    log "已提交"
-fi
-
-# ── Step 4: 打 Tag ──
-step "创建 Tag: $TAG"
-git tag -a "$TAG" -m "Release $TAG"
-log "Tag $TAG 已创建"
-
-# ── Step 5: 推送 ──
-step "推送到 GitHub"
-git push origin main
-log "main 已推送"
-git push origin "$TAG"
-log "Tag $TAG 已推送"
-
-# ── Step 6: 等待 CI ──
-step "触发 CI 构建"
-echo ""
-echo "  GitHub Actions 将自动构建 8 个平台的预编译库并创建 Release。"
-echo ""
-echo "  查看进度:"
-echo "    https://github.com/darkmice/talon-bin/actions"
-echo ""
-echo "  构建完成后，更新 superclaw 依赖:"
-echo "    Cargo.toml: talon = { git = \"...\", tag = \"$TAG\", ... }"
-echo ""
-
-log "发布 $TAG 完成！🎉"
+command -v gh >/dev/null || { echo "GitHub CLI is required." >&2; exit 1; }
+gh workflow run build-bundle.yml \
+  --repo darkmice/talon-bin --ref main \
+  -f "release_tag=$release_tag" \
+  -f "talon_core_ref=$1" \
+  -f "talon_ai_ref=$2" \
+  -f "talon_llm_ref=$3" \
+  -f "talon_agent_ref=$4" \
+  -f "talon_trace_ref=$5" \
+  -f "talon_sandbox_ref=$6" \
+  -f "talon_evocore_ref=$7" \
+  -f "talon_session_ref=$8" \
+  -f "talon_block_ref=$9"

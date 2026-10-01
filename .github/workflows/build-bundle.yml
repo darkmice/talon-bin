@@ -49,8 +49,46 @@ env:
 permissions:
   contents: write
 
+concurrency:
+  group: legacy-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
 jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout release source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require immutable tag and matching talon-sys version
+        shell: bash
+        run: |
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+            echo "::error::release_tag must be vX.Y.Z"
+            exit 1
+          }
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null; then
+            echo "::error::release tag $RELEASE_TAG already exists"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          import tomllib
+
+          version = os.environ["RELEASE_TAG"][1:]
+          cargo = tomllib.loads(pathlib.Path("talon-sys/Cargo.toml").read_text())
+          source = pathlib.Path("talon-sys/build.rs").read_text()
+          match = re.search(r'^\s*const TALON_LIB_VERSION: &str = "([^"]+)";\s*$', source, re.MULTILINE)
+          if cargo["package"]["version"] != version or match is None or match.group(1) != version:
+              raise SystemExit(f"talon-sys Cargo/build.rs versions must both be {version} before dispatch")
+          PY
+
   build:
+    needs: preflight
     strategy:
       matrix:
         include:
@@ -640,45 +678,3 @@ jobs:
           files: release/*
           token: ${{ secrets.GITHUB_TOKEN }}
           generate_release_notes: false
-
-  update-talon-sys:
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout talon-bin
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Download macOS ARM64 default bundle
-        uses: actions/download-artifact@v4
-        with:
-          name: libtalon-macos-arm64
-          path: /tmp/artifacts
-
-      - name: Update talon-sys build script
-        run: |
-          VERSION="${RELEASE_TAG#v}"
-          # sed 替换串里的 `&` 是元字符(=整个匹配文本),必须转义成 `\&`,否则
-          # `TALON_LIB_VERSION: &str = "X"` 里的 `&` 会被展开成被匹配的原文,
-          # 把行写成 `TALON_LIB_VERSION: TALON_LIB_VERSION: &str = "X"str = "Y"`
-          # (反复踩:commit 55c30bb 只修了花掉的行没修这条 sed,故复发)。
-          sed -i "s|TALON_LIB_VERSION: &str = \".*\"|TALON_LIB_VERSION: \&str = \"${VERSION}\"|" talon-sys/build.rs
-          echo "Updated talon-sys to ${VERSION}"
-          # 防御:验证替换后行格式正确(恰好一个 const 定义,无重复片段)。
-          if ! grep -qE '^\s*const TALON_LIB_VERSION: &str = "[0-9]+\.[0-9]+\.[0-9]+";\s*$' talon-sys/build.rs; then
-            echo "::error::TALON_LIB_VERSION 行格式损坏,sed 替换异常"; sed -n '/TALON_LIB_VERSION:/p' talon-sys/build.rs; exit 1
-          fi
-        env:
-          RELEASE_TAG: ${{ env.RELEASE_TAG }}
-
-      - name: Commit and tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: update to ${{ env.RELEASE_TAG }} (core / bundle / full)"
-            git push
-          fi
