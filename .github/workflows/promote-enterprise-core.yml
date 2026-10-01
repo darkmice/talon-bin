@@ -191,12 +191,17 @@ jobs:
             --draft \
             --title "Talon $RELEASE_TAG signed Enterprise Core" \
             --notes-file "$RUNNER_TEMP/release-notes.md"
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" > "$RUNNER_TEMP/published-release.json"
+          # GitHub does not expose a draft through releases/tags before its
+          # tag ref exists. The CLI can resolve the draft by tag to its ID.
+          release_id="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json databaseId --jq .databaseId)"
+          [[ "$release_id" =~ ^[0-9]+$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/releases/$release_id" > "$RUNNER_TEMP/published-release.json"
           python3 - <<'PY'
           import hashlib, json, os
           from pathlib import Path
           release = json.loads(Path(os.environ['RUNNER_TEMP'], 'published-release.json').read_text())
           assert release['draft'] and release['tag_name'] == os.environ['RELEASE_TAG']
+          assert release['target_commitish'] == os.environ['SOURCE_COMMIT']
           local = {path.name: path for path in Path('release').iterdir() if path.is_file()}
           remote = {asset['name']: asset for asset in release['assets']}
           assert local.keys() == remote.keys(), (local.keys(), remote.keys())
@@ -209,5 +214,6 @@ jobs:
               assert remote[name]['digest'] == 'sha256:' + digest.hexdigest(), name
           print(f'{len(local)} remote release asset digests verified')
           PY
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$release_id" \
+            -F draft=false --jq '.draft' | grep -qx false
           test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" --jq .object.sha)" = "$SOURCE_COMMIT"
-          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
