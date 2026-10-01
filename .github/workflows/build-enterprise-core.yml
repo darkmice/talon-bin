@@ -237,6 +237,25 @@ jobs:
           fi
           test -s "$manifest"
 
+      - name: Exercise Core C ABI and conditional prefix scan
+        shell: bash
+        run: |
+          source="talon-core/tests/native_abi_smoke.c"
+          header="talon-core/include"
+          stage="$RUNNER_TEMP/talon-stage"
+          probe="$RUNNER_TEMP/native-abi-smoke"
+          database="$RUNNER_TEMP/native-abi-smoke-db"
+          if [[ '${{ matrix.triple }}' == 'aarch64-unknown-linux-gnu' ]]; then
+            aarch64-linux-gnu-gcc -std=c11 -Wall -Wextra -Werror \
+              -I "$header" "$source" -L "$stage" -Wl,-rpath,"$stage" -ltalon -o "$probe"
+            QEMU_LD_PREFIX=/usr/aarch64-linux-gnu LD_LIBRARY_PATH="$stage" \
+              qemu-aarch64 "$probe" "$database"
+          else
+            cc -std=c11 -Wall -Wextra -Werror \
+              -I "$header" "$source" -L "$stage" -Wl,-rpath,"$stage" -ltalon -o "$probe"
+            "$probe" "$database"
+          fi
+
       - name: Generate, sign, verify, and package offline artifact
         working-directory: talon-bin
         shell: bash
@@ -425,3 +444,4 @@ jobs:
         run: |
           go test . -count=1 -ldflags=-linkmode=external \
             -run 'TestParameterizedExecAndQuery|TestKVPublicResultsFromSignedNative|TestNativeKVBinaryRoundTripFromSignedNative'
+          go test ./internal/serverprotocol -count=1 -run '^TestConditionalPrefixScanCoreDigestVector$'
