@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -168,7 +169,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def build(self, platform: str = "linux-amd64") -> Path:
+    def build(self, platform: str = "linux-amd64", artifact_profile: str = "full") -> Path:
         target = release.EXPECTED_TARGETS[platform]
         build_manifest = release.load_json(self.core_build_manifest)
         build_manifest["target"] = target["triple"]
@@ -184,6 +185,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             public_key=self.public_key,
             output=self.output,
             platform=platform,
+            artifact_profile=artifact_profile,
             build_source="test",
             workflow_run_id="1",
             runner=target["runner"],
@@ -192,7 +194,8 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             prefix_scan_conformance=self.prefix_scan_conformance,
         )
         release.command_build(args)
-        return self.output / f"libtalon-core-{platform}.manifest.json"
+        prefix = "libtalon-core-runtime" if artifact_profile == "runtime" else "libtalon-core"
+        return self.output / f"{prefix}-{platform}.manifest.json"
 
     def commit_core_header_change(self, old: str, new: str) -> dict:
         header = self.core / "include" / "talon.h"
@@ -271,6 +274,68 @@ class ReleaseSupplyChainTest(unittest.TestCase):
                 value["build"]["runner"] = "untrusted-runner"
                 with self.assertRaisesRegex(release.ReleaseError, "platform does not match"):
                     release.validate_manifest(value)
+
+    def test_runtime_only_bundle_excludes_static_library_and_verifies(self) -> None:
+        schema = release.load_json(MODULE_PATH.parents[1] / "schema" / "talon-native-manifest-v1.schema.json")
+        validator = jsonschema.Draft202012Validator(schema)
+        for platform, target in release.EXPECTED_TARGETS.items():
+            with self.subTest(platform=platform):
+                manifest = self.build(platform, artifact_profile="runtime")
+                value = release.load_json(manifest)
+                validator.validate(value)
+                self.assertEqual(value["artifact"]["kind"], "talon-core-native-runtime")
+                self.assertEqual(
+                    {record["path"] for record in value["artifact"]["files"]},
+                    {target["dynamic_library"], "talon.h", "LICENSE.core", "NOTICE"},
+                )
+                signature = Path(str(manifest) + ".sig")
+                release.command_sign(argparse.Namespace(manifest=manifest, private_key=self.private_key, signature=signature))
+                release.command_verify(self.verify_args(manifest, signature))
+                args = self.verify_args(manifest, signature)
+                args.output = self.output / f"{platform}-runtime-offline.tar.gz"
+                release.command_offline(args)
+                self.assertTrue(args.output.is_file())
+
+                value["artifact"]["files"].append({"path": target["static_library"], "size": 1, "sha256": "0" * 64})
+                with self.assertRaisesRegex(release.ReleaseError, "incomplete"):
+                    release.validate_manifest(value)
+
+    def test_go_runtime_module_requires_four_verified_signed_bundles(self) -> None:
+        signed = self.root / "signed"
+        for platform in release.EXPECTED_TARGETS:
+            manifest = self.build(platform, artifact_profile="runtime")
+            signature = Path(str(manifest) + ".sig")
+            release.command_sign(argparse.Namespace(manifest=manifest, private_key=self.private_key, signature=signature))
+            value = release.load_json(manifest)
+            base = signed / platform
+            base.mkdir(parents=True)
+            names = [manifest.name, signature.name, value["artifact"]["archive"]["path"]]
+            names += [record["path"] for record in value["materials"].values()]
+            for name in set(names):
+                shutil.copyfile(self.output / name, base / name)
+            shutil.copyfile(self.public_key, base / "talon-release-public.pem")
+        script = MODULE_PATH.parents[1] / "tools" / "package_go_runtime.py"
+        output = self.root / "staged-go-runtime"
+        command(
+            sys.executable, str(script), "--lock", str(self.lock),
+            "--talon-bin-commit", self.bin_commit, "--signed-root", str(signed),
+            "--template", str(MODULE_PATH.parents[2] / "go-runtime"),
+            "--license", str(self.bin / "README.md"), "--output", str(output),
+        )
+        self.assertEqual(json.loads((output / "identity.json").read_text())["status"], "ready")
+        self.assertEqual(len(list((output / "native").glob("*/*.manifest.json"))), 4)
+        self.assertEqual(list((output / "native").rglob("*.a")), [])
+        command("go", "test", "./...", cwd=output)
+
+        (signed / "linux-arm64" / "libtalon-core-runtime-linux-arm64.manifest.json.sig").write_bytes(b"tampered")
+        with self.assertRaises(subprocess.CalledProcessError):
+            command(
+                sys.executable, str(script), "--lock", str(self.lock),
+                "--talon-bin-commit", self.bin_commit, "--signed-root", str(signed),
+                "--template", str(MODULE_PATH.parents[2] / "go-runtime"),
+                "--license", str(self.bin / "README.md"), "--output", str(self.root / "rejected-module"),
+            )
+        self.assertFalse((self.root / "rejected-module").exists())
 
     def test_json_schema_accepts_generator_output_and_rejects_contract_drift(self) -> None:
         schema = release.load_json(MODULE_PATH.parents[1] / "schema" / "talon-native-manifest-v1.schema.json")

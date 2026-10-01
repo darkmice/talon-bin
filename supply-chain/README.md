@@ -31,6 +31,11 @@ Platform domain logic.
   outer offline bundle. The native compiler output is not claimed bit-for-bit
   reproducible across mutable hosted runner images; the manifest records the
   exact build source, toolchain, target, runner label, command, and source date.
+- The same challenged build also yields a separately signed runtime-only archive
+  without `libtalon.a`. Its `talon-core-native-runtime` manifest retains the
+  dynamic library, header, licenses, SBOM, source identity and ABI checks. A
+  four-platform aggregation verifies all signatures before staging the nested
+  `go-runtime` module; that CI artifact is a candidate, not a published module.
 - The tracked or packaged public key is diagnostic material, not its own trust
   root. Consumers must pin the expected key ID and DER public-key SHA-256 out of
   band (for example in the SDK or Enterprise configuration).

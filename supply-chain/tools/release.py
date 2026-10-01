@@ -913,7 +913,11 @@ def command_build(args: argparse.Namespace) -> None:
         raise ReleaseError("signing public key fingerprint does not match release lock")
 
     args.output.mkdir(parents=True, exist_ok=True)
-    required_names = [target["static_library"], target["dynamic_library"], "talon.h", "LICENSE.core", "NOTICE"]
+    runtime_only = getattr(args, "artifact_profile", "full") == "runtime"
+    prefix = "libtalon-core-runtime" if runtime_only else "libtalon-core"
+    required_names = [target["dynamic_library"], "talon.h", "LICENSE.core", "NOTICE"]
+    if not runtime_only:
+        required_names.insert(0, target["static_library"])
     entries: list[tuple[Path, str]] = []
     for name in required_names:
         source = args.stage / name
@@ -921,17 +925,17 @@ def command_build(args: argparse.Namespace) -> None:
             raise ReleaseError(f"required staged file is missing or empty: {name}")
         entries.append((source, name))
 
-    archive = args.output / f"libtalon-core-{args.platform}.tar.gz"
+    archive = args.output / f"{prefix}-{args.platform}.tar.gz"
     make_tar(entries, archive, epoch)
-    sbom_path = args.output / f"libtalon-core-{args.platform}.sbom.cdx.json"
+    sbom_path = args.output / f"{prefix}-{args.platform}.sbom.cdx.json"
     sbom_path.write_bytes(canonical_json(build_sbom(metadata, lock["core"]["commit"])))
-    licenses_path = args.output / f"libtalon-core-{args.platform}.licenses.json"
+    licenses_path = args.output / f"{prefix}-{args.platform}.licenses.json"
     licenses_path.write_bytes(canonical_json(build_license_inventory(metadata)))
     core_license_path = args.output / "LICENSE.core"
     core_license_path.write_bytes((args.stage / "LICENSE.core").read_bytes())
     notice_path = args.output / "NOTICE"
     notice_path.write_bytes((args.stage / "NOTICE").read_bytes())
-    manifest_path = args.output / f"libtalon-core-{args.platform}.manifest.json"
+    manifest_path = args.output / f"{prefix}-{args.platform}.manifest.json"
     manifest = {
         "schema_version": "1.0",
         "release": {
@@ -965,7 +969,7 @@ def command_build(args: argparse.Namespace) -> None:
             "reproducibility": lock["build"]["reproducibility"],
         },
         "artifact": {
-            "kind": "talon-core-native-library",
+            "kind": "talon-core-native-runtime" if runtime_only else "talon-core-native-library",
             "platform": args.platform,
             "archive": file_record(archive),
             "files": [file_record(source, name) for source, name in sorted(entries, key=lambda pair: pair[1])],
@@ -1082,8 +1086,10 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     if build["command"] != ["build", "--locked", "--release", "--lib"]:
         raise ReleaseError("build command is not the Enterprise locked build")
     artifact = require_exact_keys(manifest["artifact"], {"kind", "platform", "archive", "files"}, "artifact")
-    if artifact["kind"] != "talon-core-native-library":
+    if artifact["kind"] not in {"talon-core-native-library", "talon-core-native-runtime"}:
         raise ReleaseError("artifact kind is not pure Talon Core")
+    runtime_only = artifact["kind"] == "talon-core-native-runtime"
+    prefix = "libtalon-core-runtime" if runtime_only else "libtalon-core"
     platform = artifact["platform"]
     if platform not in EXPECTED_TARGETS:
         raise ReleaseError("artifact platform is unsupported")
@@ -1091,9 +1097,9 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     if build["target"] != target["triple"] or build["runner"] != target["runner"]:
         raise ReleaseError("artifact platform does not match build target and runner")
     validate_file_record(artifact["archive"], "artifact.archive")
-    if artifact["archive"]["path"] != f"libtalon-core-{platform}.tar.gz":
+    if artifact["archive"]["path"] != f"{prefix}-{platform}.tar.gz":
         raise ReleaseError("artifact archive filename does not match platform")
-    if not isinstance(artifact["files"], list) or len(artifact["files"]) != 5:
+    if not isinstance(artifact["files"], list) or len(artifact["files"]) != (4 if runtime_only else 5):
         raise ReleaseError("artifact.files is incomplete")
     for index, record in enumerate(artifact["files"]):
         validate_file_record(record, f"artifact.files[{index}]")
@@ -1101,20 +1107,21 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     if len(names) != len(set(names)):
         raise ReleaseError("artifact.files contains duplicate paths")
     expected_names = {
-        target["static_library"],
         target["dynamic_library"],
         "talon.h",
         "LICENSE.core",
         "NOTICE",
     }
+    if not runtime_only:
+        expected_names.add(target["static_library"])
     if set(names) != expected_names:
         raise ReleaseError("artifact.files does not match the platform file contract")
     materials = require_exact_keys(manifest["materials"], {"sbom", "license_inventory", "core_license", "notice"}, "materials")
     for name, record in materials.items():
         validate_file_record(record, f"materials.{name}")
     expected_material_paths = {
-        "sbom": f"libtalon-core-{platform}.sbom.cdx.json",
-        "license_inventory": f"libtalon-core-{platform}.licenses.json",
+        "sbom": f"{prefix}-{platform}.sbom.cdx.json",
+        "license_inventory": f"{prefix}-{platform}.licenses.json",
         "core_license": "LICENSE.core",
         "notice": "NOTICE",
     }
@@ -1180,7 +1187,8 @@ def command_verify(args: argparse.Namespace) -> None:
         or manifest["abi"]["header_sha256"] != args.expected_header_sha256
     ):
         raise ReleaseError("manifest release/source/ABI identity does not match trusted policy")
-    expected_manifest_name = f"libtalon-core-{manifest['artifact']['platform']}.manifest.json"
+    prefix = "libtalon-core-runtime" if manifest["artifact"]["kind"] == "talon-core-native-runtime" else "libtalon-core"
+    expected_manifest_name = f"{prefix}-{manifest['artifact']['platform']}.manifest.json"
     if args.manifest.name != expected_manifest_name:
         raise ReleaseError("manifest filename does not match platform")
     if manifest["signing"]["signature"] != expected_manifest_name + ".sig":
@@ -1271,6 +1279,7 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--public-key", type=Path, required=True)
     build.add_argument("--output", type=Path, required=True)
     build.add_argument("--platform", required=True)
+    build.add_argument("--artifact-profile", choices=("full", "runtime"), default="full")
     build.add_argument("--build-source", required=True)
     build.add_argument("--workflow-run-id", required=True)
     build.add_argument("--runner", required=True)

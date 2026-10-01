@@ -7,6 +7,7 @@ on:
       - 'NOTICE'
       - '.github/workflows/build-enterprise-core.yml'
       - 'talon-sys/**'
+      - 'go-runtime/**'
       - 'README.md'
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - 'NOTICE'
       - '.github/workflows/build-enterprise-core.yml'
       - 'talon-sys/**'
+      - 'go-runtime/**'
       - 'README.md'
   workflow_dispatch:
 
@@ -234,58 +236,49 @@ jobs:
           mkdir -p "$output"
           rustc_version="$(rustc --version --verbose | tr '\n' ';')"
           cargo_version="$(cargo --version)"
-          manifest="$(python3 supply-chain/tools/release.py build \
-            --lock supply-chain/release-lock.json \
-            --core-root ../talon-core \
-            --talon-bin-root . \
-            --stage "$RUNNER_TEMP/talon-stage" \
-            --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" \
-            --core-build-manifest "$RUNNER_TEMP/core-build-manifest.json" \
-            --public-key "$RUNNER_TEMP/talon-release-public.pem" \
-            --output "$output" \
-            --platform '${{ matrix.platform }}' \
-            --build-source 'github-actions:darkmice/talon-bin/.github/workflows/build-enterprise-core.yml' \
-            --workflow-run-id '${{ github.run_id }}' \
-            --runner '${{ matrix.runner }}' \
-            --rustc "$rustc_version" \
-            --cargo "$cargo_version")"
-          signature="${manifest}.sig"
-          python3 supply-chain/tools/release.py sign \
-            --manifest "$manifest" \
-            --private-key "$RUNNER_TEMP/talon-release-key.pem" \
-            --signature "$signature"
-          python3 supply-chain/tools/release.py verify \
-            --manifest "$manifest" \
-            --signature "$signature" \
-            --public-key "$RUNNER_TEMP/talon-release-public.pem" \
-            --expected-key-id '${{ steps.lock.outputs.signing_key_id }}' \
-            --expected-key-sha256 '${{ steps.lock.outputs.signing_key_sha256 }}' \
-            --expected-release-tag '${{ steps.lock.outputs.release_tag }}' \
-            --expected-talon-bin-commit '${{ steps.lock.outputs.talon_bin_commit }}' \
-            --expected-core-repository '${{ steps.lock.outputs.core_repository }}' \
-            --expected-core-tag '${{ steps.lock.outputs.core_tag }}' \
-            --expected-core-commit '${{ steps.lock.outputs.core_commit }}' \
-            --expected-core-version '${{ steps.lock.outputs.core_version }}' \
-            --expected-abi-profile '${{ steps.lock.outputs.abi_profile }}' \
-            --expected-abi-version '${{ steps.lock.outputs.abi_version }}' \
-            --expected-header-sha256 '${{ steps.lock.outputs.header_sha256 }}'
           cp "$RUNNER_TEMP/talon-release-public.pem" "$output/talon-release-public.pem"
-          python3 supply-chain/tools/release.py offline \
-            --manifest "$manifest" \
-            --signature "$signature" \
-            --public-key "$output/talon-release-public.pem" \
-            --expected-key-id '${{ steps.lock.outputs.signing_key_id }}' \
-            --expected-key-sha256 '${{ steps.lock.outputs.signing_key_sha256 }}' \
-            --expected-release-tag '${{ steps.lock.outputs.release_tag }}' \
-            --expected-talon-bin-commit '${{ steps.lock.outputs.talon_bin_commit }}' \
-            --expected-core-repository '${{ steps.lock.outputs.core_repository }}' \
-            --expected-core-tag '${{ steps.lock.outputs.core_tag }}' \
-            --expected-core-commit '${{ steps.lock.outputs.core_commit }}' \
-            --expected-core-version '${{ steps.lock.outputs.core_version }}' \
-            --expected-abi-profile '${{ steps.lock.outputs.abi_profile }}' \
-            --expected-abi-version '${{ steps.lock.outputs.abi_version }}' \
-            --expected-header-sha256 '${{ steps.lock.outputs.header_sha256 }}' \
-            --output "$output/talon-enterprise-core-${{ matrix.platform }}-offline.tar.gz"
+          for profile in full runtime; do
+            manifest="$(python3 supply-chain/tools/release.py build \
+              --lock supply-chain/release-lock.json \
+              --core-root ../talon-core \
+              --talon-bin-root . \
+              --stage "$RUNNER_TEMP/talon-stage" \
+              --cargo-metadata "$RUNNER_TEMP/cargo-metadata.json" \
+              --core-build-manifest "$RUNNER_TEMP/core-build-manifest.json" \
+              --public-key "$RUNNER_TEMP/talon-release-public.pem" \
+              --output "$output" \
+              --platform '${{ matrix.platform }}' \
+              --artifact-profile "$profile" \
+              --build-source 'github-actions:darkmice/talon-bin/.github/workflows/build-enterprise-core.yml' \
+              --workflow-run-id '${{ github.run_id }}' \
+              --runner '${{ matrix.runner }}' \
+              --rustc "$rustc_version" \
+              --cargo "$cargo_version")"
+            signature="${manifest}.sig"
+            python3 supply-chain/tools/release.py sign \
+              --manifest "$manifest" \
+              --private-key "$RUNNER_TEMP/talon-release-key.pem" \
+              --signature "$signature"
+            trusted_args=(
+              --manifest "$manifest"
+              --signature "$signature"
+              --public-key "$output/talon-release-public.pem"
+              --expected-key-id '${{ steps.lock.outputs.signing_key_id }}'
+              --expected-key-sha256 '${{ steps.lock.outputs.signing_key_sha256 }}'
+              --expected-release-tag '${{ steps.lock.outputs.release_tag }}'
+              --expected-talon-bin-commit '${{ steps.lock.outputs.talon_bin_commit }}'
+              --expected-core-repository '${{ steps.lock.outputs.core_repository }}'
+              --expected-core-tag '${{ steps.lock.outputs.core_tag }}'
+              --expected-core-commit '${{ steps.lock.outputs.core_commit }}'
+              --expected-core-version '${{ steps.lock.outputs.core_version }}'
+              --expected-abi-profile '${{ steps.lock.outputs.abi_profile }}'
+              --expected-abi-version '${{ steps.lock.outputs.abi_version }}'
+              --expected-header-sha256 '${{ steps.lock.outputs.header_sha256 }}'
+            )
+            python3 supply-chain/tools/release.py verify "${trusted_args[@]}"
+            python3 supply-chain/tools/release.py offline "${trusted_args[@]}" \
+              --output "$output/talon-enterprise-core-${{ matrix.platform }}-${profile}-offline.tar.gz"
+          done
           (
             cd "$output" || exit 1
             checksum_files=()
@@ -301,5 +294,43 @@ jobs:
         with:
           name: talon-enterprise-core-${{ matrix.platform }}
           path: ${{ runner.temp }}/talon-output/*
+          if-no-files-found: error
+          compression-level: 0
+
+  stage-go-runtime:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build-signed-core
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout talon-bin
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Download all signed candidates
+        uses: actions/download-artifact@v4
+        with:
+          pattern: talon-enterprise-core-*
+          path: signed
+
+      - name: Verify and stage versioned Go runtime module
+        shell: bash
+        run: |
+          set -euo pipefail
+          for platform in linux-amd64 linux-arm64 macos-amd64 macos-arm64; do
+            mv "signed/talon-enterprise-core-$platform" "signed/$platform"
+          done
+          python3 supply-chain/tools/package_go_runtime.py \
+            --lock supply-chain/release-lock.json \
+            --talon-bin-commit "$GITHUB_SHA" \
+            --signed-root signed \
+            --template go-runtime \
+            --license LICENSE \
+            --output staged-go-runtime
+          (cd staged-go-runtime && go test ./...)
+
+      - name: Upload reviewed Go module candidate
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
+        with:
+          name: talon-core-go-runtime-candidate
+          path: staged-go-runtime/*
           if-no-files-found: error
           compression-level: 0
