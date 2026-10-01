@@ -19,6 +19,13 @@ on:
       - 'go-runtime/**'
       - 'README.md'
   workflow_dispatch:
+    inputs:
+      release_mode:
+        description: 'candidate builds review artifacts; release requires admitted main and stages ready assets'
+        type: choice
+        options: [candidate, release]
+        default: candidate
+        required: true
 
 permissions:
   contents: read
@@ -84,8 +91,16 @@ jobs:
         working-directory: talon-bin
         shell: bash
         run: |
-          python3 supply-chain/tools/release.py validate-candidate-lock \
-            --lock supply-chain/release-lock.json
+          if [[ '${{ inputs.release_mode }}' == 'release' ]]; then
+            test "$GITHUB_REF" = 'refs/heads/main'
+            python3 supply-chain/tools/release.py validate-lock \
+              --lock supply-chain/release-lock.json
+            python3 supply-chain/tools/release.py validate-prefix-scan-conformance \
+              --path supply-chain/conformance/conditional-prefix-scan-v1.json --require-ready
+          else
+            python3 supply-chain/tools/release.py validate-candidate-lock \
+              --lock supply-chain/release-lock.json
+          fi
           python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import json
           import subprocess
@@ -264,6 +279,10 @@ jobs:
           mkdir -p "$output"
           rustc_version="$(rustc --version --verbose | tr '\n' ';')"
           cargo_version="$(cargo --version)"
+          candidate_args=()
+          if [[ '${{ inputs.release_mode }}' != 'release' ]]; then
+            candidate_args=(--candidate)
+          fi
           cp "$RUNNER_TEMP/talon-release-public.pem" "$output/talon-release-public.pem"
           for profile in full runtime; do
             manifest="$(python3 supply-chain/tools/release.py build \
@@ -277,7 +296,7 @@ jobs:
               --output "$output" \
               --platform '${{ matrix.platform }}' \
               --artifact-profile "$profile" \
-              --candidate \
+              "${candidate_args[@]}" \
               --build-source 'github-actions:darkmice/talon-bin/.github/workflows/build-enterprise-core.yml' \
               --workflow-run-id '${{ github.run_id }}' \
               --runner '${{ matrix.runner }}' \
@@ -347,8 +366,12 @@ jobs:
           for platform in linux-amd64 linux-arm64 macos-amd64 macos-arm64; do
             mv "signed/talon-enterprise-core-$platform" "signed/$platform"
           done
+          candidate_args=()
+          if [[ '${{ inputs.release_mode }}' != 'release' ]]; then
+            candidate_args=(--candidate)
+          fi
           python3 supply-chain/tools/package_go_runtime.py \
-            --candidate \
+            "${candidate_args[@]}" \
             --lock supply-chain/release-lock.json \
             --talon-bin-commit "$GITHUB_SHA" \
             --signed-root signed \
@@ -360,7 +383,7 @@ jobs:
       - name: Upload reviewed Go module candidate
         uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4.3.3
         with:
-          name: talon-core-go-runtime-candidate
+          name: talon-core-go-runtime-${{ inputs.release_mode }}
           path: staged-go-runtime/*
           if-no-files-found: error
           compression-level: 0

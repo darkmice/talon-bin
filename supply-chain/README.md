@@ -35,23 +35,24 @@ Platform domain logic.
   without `libtalon.a`. Its `talon-core-native-runtime` manifest retains the
   dynamic library, header, licenses, SBOM, source identity and ABI checks. A
   four-platform aggregation verifies all signatures before staging the nested
-  `go-runtime` module; that CI artifact is a candidate, not a published module.
+  `go-runtime` module. A candidate is never a published module.
 - The tracked or packaged public key is diagnostic material, not its own trust
   root. Consumers must pin the expected key ID and DER public-key SHA-256 out of
   band (for example in the SDK or Enterprise configuration).
 
 The new GitHub workflow only uploads workflow artifacts. It does not create a
 GitHub Release, publish an SDK package, commit, or push.
-Its explicit candidate path requires a versioned target tag and pinned signing
-identity, then challenges the exact Core self-manifest on each target while
-conformance and admission remain gated. The staged Go module identity stays
-`gated`; only a separately reviewed release-ready lock may produce a `ready`
-module for an immutable tag.
+Dispatch with `release_mode=candidate` to challenge the exact Core self-manifest
+on each target while conformance remains gated. The staged Go module identity
+stays `gated`. Once the four-target C ABI, SDK native, and prefix-scan evidence
+has been reviewed and the lock and conformance are admitted, dispatch
+`release_mode=release` from `main`. That mode requires the ready lock and
+conformance and stages a `ready` module for separate publication under an
+immutable nested-module tag.
 
-The producer matrix builds four artifact targets. The current `talon-sdk-go`
-runtime selector recognizes all four, but this does not establish four-platform
-native E2E coverage. Each target still needs its signed artifact verified and
-loaded by the matching runtime.
+The producer matrix builds four artifact targets. Each signed runtime artifact
+is loaded by the SDK on its matching native runner; the Core C ABI smoke and
+SDK prefix-scan digest vector run on those targets as separate checks.
 
 ## SDK runtime verification contract
 
@@ -112,8 +113,8 @@ python3 -m unittest discover -s supply-chain/tests -v
 Production generation requires a release-ready lock and an Ed25519 private key
 provided to Actions as `TALON_RELEASE_SIGNING_KEY_PEM_B64`. The corresponding
 DER public-key SHA-256 must be pinned in the lock before dispatch. A clean,
-tagged Core whose ABI matches `runtime_attestation` is also required; the current
-development lock cannot generate a candidate.
+tagged Core whose ABI matches `runtime_attestation` is also required. The
+current lock can produce signed candidates but is not yet release-ready.
 
 Offline verification must supply the trusted key and complete release/source/ABI
 identity separately from the bundle. Pinning only a long-lived key would still
