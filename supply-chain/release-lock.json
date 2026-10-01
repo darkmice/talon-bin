@@ -209,11 +209,11 @@
     "reproducibility": "exact source and toolchain with deterministic packaging; native code bytes are not claimed reproducible across mutable hosted runner images"
   },
   "signing": {
-    "status": "gated",
+    "status": "ready",
     "algorithm": "Ed25519",
-    "key_id": "UNASSIGNED",
-    "public_key_sha256": null,
-    "reason": "A production release public key and matching GitHub secret have not been provisioned."
+    "key_id": "talon-enterprise-core-2026-10-01",
+    "public_key_sha256": "617eca89ae8b1e824b5ae764cee171f98eff07e16123e7a0dbead73425b1fa2c",
+    "reason": "Production Ed25519 public key is pinned and matching GitHub Actions secret is configured; the overall release remains gated by release identity, conformance, and four-target admission."
   },
   "targets": [
     {

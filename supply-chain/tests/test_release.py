@@ -587,9 +587,9 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
         self.assertEqual(lock["release_tag"], "UNRELEASED")
         self.assertEqual(lock["core"]["tag"], "v0.1.1")
-        self.assertEqual(lock["signing"]["status"], "gated")
-        self.assertEqual(lock["signing"]["key_id"], "UNASSIGNED")
-        self.assertIsNone(lock["signing"]["public_key_sha256"])
+        self.assertEqual(lock["signing"]["status"], "ready")
+        self.assertNotEqual(lock["signing"]["key_id"], "UNASSIGNED")
+        self.assertRegex(lock["signing"]["public_key_sha256"], release.HASH_RE)
         self.assertEqual(lock["runtime_attestation"]["status"], "gated")
         self.assertEqual(lock["runtime_attestation"]["features"], list(release.RUNTIME_FEATURE_CONTRACT))
         capabilities = {
@@ -652,11 +652,10 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "exactly match"):
             release.validate_lock(lock, allow_gated=False)
 
-    def test_tracked_lock_cannot_be_promoted_without_signing_identity(self) -> None:
+    def test_tracked_lock_cannot_be_promoted_without_runtime_attestation(self) -> None:
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
         lock["release_tag"] = "v9.9.9"
-        lock["runtime_attestation"]["status"] = "ready"
-        with self.assertRaisesRegex(release.ReleaseError, "release signing is gated"):
+        with self.assertRaisesRegex(release.ReleaseError, "binary self-attestation is gated"):
             release.validate_lock(lock, allow_gated=False)
 
     def test_runtime_required_symbol_drift_is_rejected(self) -> None:
