@@ -6,6 +6,9 @@ Enterprise embedded consumers should use the pure-Core, signed and pinned
 artifact contract documented in [`supply-chain/README.md`](supply-chain/README.md).
 That path never resolves `latest` and does not pull AI / LLM / Agent modules.
 
+The same-process native session design and the separate multi-process service
+boundary are documented in [`docs/native-shared-sessions.md`](docs/native-shared-sessions.md).
+
 ## What is Talon?
 
 Talon is a multi-model data engine designed for AI applications. It combines **SQL + KV + TimeSeries + MessageQueue + Vector** capabilities in a single binary with zero external dependencies.
