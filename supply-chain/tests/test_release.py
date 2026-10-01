@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import importlib.util
 import json
 from pathlib import Path
@@ -42,7 +43,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
                 "#define TALON_STORAGE_CONDITIONAL_PREFIX_SCAN_VERSION 1u",
                 "#define TALON_REVISION_STREAM_VERSION 2u",
                 "#define TALON_NATIVE_ABI_VERSION 1u",
-                "#define TALON_NATIVE_BUILD_MANIFEST_VERSION 1u",
+                "#define TALON_NATIVE_BUILD_MANIFEST_VERSION 2u",
                 *(f"/* {token} */" for token in release.REVISION_STREAM_V2_HEADER_TOKENS),
                 *(f"int {symbol}(void);" for symbol in release.SDK_REQUIRED_SYMBOLS),
                 "",
@@ -105,38 +106,14 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             "runtime_attestation": {
                 "status": "ready",
                 "reason": "fixture candidate is challenged before packaging",
-                "manifest_version": 1,
+                "manifest_version": 2,
                 "abi_profile": "talon-native-c",
                 "abi_version": 1,
                 "required_symbols": release.SDK_REQUIRED_SYMBOLS,
-                "features": [
-                    "native_build_manifest_v1",
-                    "native_error_codes_v1",
-                    "sql_tlv_v1",
-                    "storage_conditional_batch_v1",
-                    "native_conditional_transaction_v2",
-                    "storage_conditional_prefix_scan_v1",
-                    "revision_stream_v1",
-                    "revision_stream_v2_mmr_proof",
-                ],
-                "capabilities": [
-                    {"name": "storage_conditional_batch", "version": 1, "status": "available", "reason": None},
-                    {"name": "native_conditional_transaction_v2", "version": 2, "status": "available", "reason": None},
-                    {
-                        "name": "storage_conditional_prefix_scan",
-                        "version": 1,
-                        "status": "gated",
-                        "reason": release.PREFIX_SCAN_V1_GATED_REASON,
-                    },
-                    {
-                        "name": "revision_stream",
-                        "version": 2,
-                        "status": "gated",
-                        "reason": release.REVISION_STREAM_V2_GATED_REASON,
-                    },
-                    {"name": "native_quorum", "version": 1, "status": "gated", "reason": "fixture quorum scope is incomplete"},
-                    {"name": "server_ha_production_admission", "version": 1, "status": "gated", "reason": "fixture HA evidence is incomplete"},
-                ],
+                "features": list(release.RUNTIME_FEATURE_CONTRACT),
+                "capabilities": copy.deepcopy(
+                    release.load_json(MODULE_PATH.parents[1] / "release-lock.json")["runtime_attestation"]["capabilities"]
+                ),
             },
             "build": {
                 "rust_toolchain": "1.92.0",
@@ -165,7 +142,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         self.prefix_scan_conformance = self.root / "conditional-prefix-scan-v1.json"
         self.prefix_scan_conformance.write_bytes(release.canonical_json(conformance))
         build_manifest = {
-            "manifest_version": 1,
+            "manifest_version": 2,
             "core_semver": "1.2.3",
             "git_commit": self.core_commit,
             "git_dirty": False,
@@ -544,7 +521,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
     def test_tracked_development_lock_keeps_unreleased_gates(self) -> None:
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
         self.assertEqual(lock["release_tag"], "UNRELEASED")
-        self.assertIsNone(lock["core"]["tag"])
+        self.assertEqual(lock["core"]["tag"], "v0.1.1")
         self.assertEqual(lock["signing"]["status"], "gated")
         self.assertEqual(lock["signing"]["key_id"], "UNASSIGNED")
         self.assertIsNone(lock["signing"]["public_key_sha256"])
@@ -554,10 +531,11 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             capability["name"]: capability
             for capability in lock["runtime_attestation"]["capabilities"]
         }
-        for name in ("storage_conditional_prefix_scan", "revision_stream", "native_quorum", "server_ha_production_admission"):
+        for name in ("revision_stream", "native_quorum", "server_ha_production_admission"):
             self.assertEqual(capabilities[name]["status"], "gated")
         self.assertEqual(capabilities["storage_conditional_prefix_scan"]["version"], 1)
-        self.assertEqual(capabilities["storage_conditional_prefix_scan"]["reason"], release.PREFIX_SCAN_V1_GATED_REASON)
+        self.assertEqual(capabilities["storage_conditional_prefix_scan"]["status"], "available")
+        self.assertEqual(capabilities["native_shared_core"]["status"], "available")
         self.assertEqual(capabilities["revision_stream"]["version"], 2)
         self.assertEqual(capabilities["revision_stream"]["reason"], release.REVISION_STREAM_V2_GATED_REASON)
 
@@ -600,7 +578,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             for item in lock["runtime_attestation"]["capabilities"]
             if item["name"] == "storage_conditional_prefix_scan"
         )
-        capability["status"] = "available"
+        capability["status"] = "gated"
         capability["reason"] = None
         with self.assertRaisesRegex(release.ReleaseError, "storage_conditional_prefix_scan"):
             release.validate_lock(lock, allow_gated=False)
@@ -609,23 +587,37 @@ class ReleaseSupplyChainTest(unittest.TestCase):
         with self.assertRaisesRegex(release.ReleaseError, "exactly match"):
             release.validate_lock(lock, allow_gated=False)
 
-    def test_tracked_old_outer_abi_cannot_be_promoted_by_flipping_release_gates(self) -> None:
+    def test_tracked_lock_cannot_be_promoted_without_signing_identity(self) -> None:
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
         lock["release_tag"] = "v9.9.9"
-        lock["core"]["tag"] = "v9.9.9"
         lock["runtime_attestation"]["status"] = "ready"
-        lock["signing"].update(
-            status="ready",
-            key_id="test-only-key",
-            public_key_sha256="0" * 64,
-        )
-        with self.assertRaisesRegex(release.ReleaseError, "release ABI does not match"):
+        with self.assertRaisesRegex(release.ReleaseError, "release signing is gated"):
             release.validate_lock(lock, allow_gated=False)
 
     def test_runtime_required_symbol_drift_is_rejected(self) -> None:
         lock = release.load_json(self.lock)
         lock["runtime_attestation"]["required_symbols"].remove("talon_build_manifest")
         with self.assertRaisesRegex(release.ReleaseError, "required symbols"):
+            release.validate_lock(lock, allow_gated=False)
+
+    def test_shared_core_capability_and_v2_limits_are_locked(self) -> None:
+        lock = release.load_json(self.lock)
+        shared = next(
+            value for value in lock["runtime_attestation"]["capabilities"]
+            if value["name"] == "native_shared_core"
+        )
+        shared["status"] = "gated"
+        shared["reason"] = "not yet released"
+        with self.assertRaisesRegex(release.ReleaseError, "native_shared_core"):
+            release.validate_lock(lock, allow_gated=False)
+
+        lock = release.load_json(self.lock)
+        compact = next(
+            value for value in lock["runtime_attestation"]["capabilities"]
+            if value["name"] == "storage_conditional_compact_receipt"
+        )
+        compact["limits"]["max_conditions"] += 1
+        with self.assertRaisesRegex(release.ReleaseError, "compact_receipt limits"):
             release.validate_lock(lock, allow_gated=False)
 
     def test_core_self_manifest_header_or_symbol_drift_is_rejected(self) -> None:
@@ -810,7 +802,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             release.validate_lock(lock, allow_gated=False)
         lock = release.load_json(self.lock)
         lock["runtime_attestation"]["capabilities"][0]["version"] = True
-        with self.assertRaisesRegex(release.ReleaseError, "storage_conditional_batch"):
+        with self.assertRaisesRegex(release.ReleaseError, "native_sql_session"):
             release.validate_lock(lock, allow_gated=False)
 
         manifest_path = self.build()

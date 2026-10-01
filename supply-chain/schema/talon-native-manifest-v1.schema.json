@@ -39,8 +39,8 @@
         "header_sha256": {"$ref": "#/$defs/sha256"},
         "required_symbols": {
           "type": "array",
-          "minItems": 23,
-          "maxItems": 23,
+          "minItems": 24,
+          "maxItems": 24,
           "uniqueItems": true,
           "items": {"type": "string", "pattern": "^talon_[a-z0-9_]+$"},
           "allOf": [
@@ -51,6 +51,7 @@
             {"contains": {"const": "talon_run_sql_param_bin"}},
             {"contains": {"const": "talon_kv_set"}},
             {"contains": {"const": "talon_kv_get"}},
+            {"contains": {"const": "talon_kv_read_v1"}},
             {"contains": {"const": "talon_kv_del"}},
             {"contains": {"const": "talon_kv_incrby"}},
             {"contains": {"const": "talon_kv_setnx"}},
