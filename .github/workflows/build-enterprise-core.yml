@@ -148,6 +148,9 @@ jobs:
           rustup toolchain install '${{ steps.lock.outputs.rust_toolchain }}' \
             --profile minimal --target '${{ matrix.triple }}'
           rustup override set '${{ steps.lock.outputs.rust_toolchain }}'
+          if [[ '${{ runner.os }}' == 'macOS' ]]; then
+            rustup component add llvm-tools-preview
+          fi
 
       - name: Install Linux ARM64 linker
         if: matrix.triple == 'aarch64-unknown-linux-gnu'
@@ -198,7 +201,10 @@ jobs:
             nm --defined-only "$RUNNER_TEMP/talon-stage/${{ matrix.static_library }}" > "$RUNNER_TEMP/static-symbols.txt"
             nm -D --defined-only "$RUNNER_TEMP/talon-stage/${{ matrix.dynamic_library }}" > "$RUNNER_TEMP/dynamic-symbols.txt"
           else
-            nm -gU "$RUNNER_TEMP/talon-stage/${{ matrix.static_library }}" > "$RUNNER_TEMP/static-symbols.txt"
+            host="$(rustc -vV | sed -n 's/^host: //p')"
+            llvm_nm="$(rustc --print sysroot)/lib/rustlib/$host/bin/llvm-nm"
+            test -x "$llvm_nm"
+            "$llvm_nm" --defined-only --extern-only "$RUNNER_TEMP/talon-stage/${{ matrix.static_library }}" > "$RUNNER_TEMP/static-symbols.txt"
             nm -gU "$RUNNER_TEMP/talon-stage/${{ matrix.dynamic_library }}" > "$RUNNER_TEMP/dynamic-symbols.txt"
           fi
           while IFS= read -r symbol; do
@@ -339,3 +345,83 @@ jobs:
           path: staged-go-runtime/*
           if-no-files-found: error
           compression-level: 0
+
+  sdk-native-candidate:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build-signed-core
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runner: ubuntu-24.04
+          - platform: linux-arm64
+            runner: ubuntu-24.04-arm
+          - platform: macos-amd64
+            runner: macos-15-intel
+          - platform: macos-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout release policy
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: talon-bin
+
+      - name: Checkout exact SDK candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: darkmice/talon-sdk-go
+          ref: 4698cdfbc6ab89cb0892c1dc23a1d1459459670b
+          path: talon-sdk-go
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Download signed platform candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: talon-enterprise-core-${{ matrix.platform }}
+          path: signed
+
+      - name: Read pinned identity for SDK
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_ENV"
+          import json
+          from pathlib import Path
+          lock = json.loads(Path("talon-bin/supply-chain/release-lock.json").read_text())
+          manifest = json.loads(next(Path("signed").glob("libtalon-core-runtime-*.manifest.json")).read_text())
+          assert manifest["release"]["tag"] == lock["release_tag"]
+          assert manifest["source"]["commit"] == lock["core"]["commit"]
+          assert manifest["signing"]["public_key_sha256"] == lock["signing"]["public_key_sha256"]
+          values = {
+              "TALON_NATIVE_EXPECTED_KEY_ID": lock["signing"]["key_id"],
+              "TALON_NATIVE_EXPECTED_KEY_SHA256": lock["signing"]["public_key_sha256"],
+              "TALON_NATIVE_EXPECTED_RELEASE_TAG": lock["release_tag"],
+              "TALON_NATIVE_EXPECTED_TALON_BIN_COMMIT": manifest["release"]["talon_bin_commit"],
+              "TALON_NATIVE_EXPECTED_CORE_REPOSITORY": lock["core"]["repository"],
+              "TALON_NATIVE_EXPECTED_CORE_TAG": lock["core"]["tag"],
+              "TALON_NATIVE_EXPECTED_CORE_COMMIT": lock["core"]["commit"],
+              "TALON_NATIVE_EXPECTED_CORE_VERSION": lock["core"]["cargo_version"],
+              "TALON_NATIVE_EXPECTED_ABI_PROFILE": lock["abi"]["profile"],
+              "TALON_NATIVE_EXPECTED_ABI_VERSION": str(lock["abi"]["version"]),
+              "TALON_NATIVE_EXPECTED_HEADER_SHA256": lock["abi"]["header_sha256"],
+          }
+          for name, value in values.items():
+              print(f"{name}={value}")
+          PY
+
+      - name: SDK signed native SQL and KV acceptance
+        working-directory: talon-sdk-go
+        shell: bash
+        env:
+          TALON_NATIVE_BUNDLE_DIR: ${{ github.workspace }}/signed
+          TALON_NATIVE_PUBLIC_KEY_FILE: ${{ github.workspace }}/signed/talon-release-public.pem
+          TALON_NATIVE_ARTIFACT_PROFILE: runtime
+          TALON_TEST_PRODUCTION_NATIVE: '1'
+        run: |
+          go test . -count=1 -ldflags=-linkmode=external \
+            -run 'TestParameterizedExecAndQuery|TestKVPublicResultsFromSignedNative|TestNativeKVBinaryRoundTripFromSignedNative'
