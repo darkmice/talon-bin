@@ -40,7 +40,7 @@ Platform domain logic.
   root. Consumers must pin the expected key ID and DER public-key SHA-256 out of
   band (for example in the SDK or Enterprise configuration).
 
-The new GitHub workflow only uploads workflow artifacts. It does not create a
+The `build-enterprise-core.yml` workflow only uploads workflow artifacts. It does not create a
 GitHub Release, publish an SDK package, commit, or push.
 Dispatch with `release_mode=candidate` to challenge the exact Core self-manifest
 on each target while conformance remains gated. The staged Go module identity
@@ -50,6 +50,15 @@ has been reviewed and the lock and conformance are admitted, dispatch
 conformance, stages a `ready` module, and exercises SDK `talon.Open` with that
 module on four native runners before separate publication under an immutable
 nested-module tag.
+
+After a successful `release_mode=release` run from `main`, the separate manual
+`promote-enterprise-core.yml` workflow accepts that exact run ID and its full
+source commit. Run `mode=verify` first: it checks the run identity, all five
+artifacts, every checksum and Ed25519 manifest, and the exact bytes staged in
+the ready Go module. `mode=publish` repeats those checks, creates a Go module
+branch for review, then uploads a draft GitHub Release, verifies every remote
+asset digest, and publishes it. The module branch is reviewed and merged before
+the immutable nested-module tag is created.
 
 The producer matrix builds four artifact targets. Each signed runtime artifact
 is loaded by the SDK on its matching native runner; the Core C ABI smoke, Core
