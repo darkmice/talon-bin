@@ -345,9 +345,53 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  core-prefix-scan-conformance:
+    if: github.event_name == 'workflow_dispatch'
+    needs: verify-structure
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout release policy
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: talon-bin
+
+      - name: Read exact Core source and toolchain
+        id: lock
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          lock = json.load(open("talon-bin/supply-chain/release-lock.json", encoding="utf-8"))
+          print("core_commit=" + lock["core"]["commit"])
+          print("rust_toolchain=" + lock["build"]["rust_toolchain"])
+          PY
+
+      - name: Checkout exact Talon Core commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: darkmice/talon-core
+          ref: ${{ steps.lock.outputs.core_commit }}
+          token: ${{ secrets.TALON_AI_TOKEN }}
+          path: talon-core
+
+      - name: Run Core prefix-scan conformance on native runner
+        working-directory: talon-core
+        shell: bash
+        run: |
+          rustup toolchain install '${{ steps.lock.outputs.rust_toolchain }}' --profile minimal
+          rustup override set '${{ steps.lock.outputs.rust_toolchain }}'
+          test "$(git rev-parse HEAD)" = '${{ steps.lock.outputs.core_commit }}'
+          cargo test --locked --lib conditional_prefix_scan -- --test-threads=1
+          cargo test --locked --test server_e2e \
+            e2e_http_conditional_prefix_scan_exposes_verified_page_and_cursor -- --exact
+
   stage-go-runtime:
     if: github.event_name == 'workflow_dispatch'
-    needs: build-signed-core
+    needs: [build-signed-core, core-prefix-scan-conformance]
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout talon-bin
