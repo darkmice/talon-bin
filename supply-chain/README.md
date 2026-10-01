@@ -125,9 +125,10 @@ Production generation requires a release-ready lock and an Ed25519 private key
 provided to Actions as `TALON_RELEASE_SIGNING_KEY_PEM_B64`. The corresponding
 DER public-key SHA-256 must be pinned in the lock before dispatch. A clean,
 tagged Core whose ABI matches `runtime_attestation` is also required. The
-current `v0.1.54` lock has been admitted after the four-target candidate run;
-publication still requires release mode from merged `main` and review of its
-new signed artifacts.
+The `v0.1.54` release was built from merged `main` in Actions run
+`36887628665`, independently verified in run `36889354570`, and published with
+52 assets. Its `go-runtime/v0.1.54` module tag contains the reviewed signed
+runtime bundles.
 
 Offline verification must supply the trusted key and complete release/source/ABI
 identity separately from the bundle. Pinning only a long-lived key would still
