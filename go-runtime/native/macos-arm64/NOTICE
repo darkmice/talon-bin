@@ -1,0 +1,15 @@
+Talon Binary Releases
+Copyright (c) 2026 Talon Contributors
+
+This repository packages Talon native artifacts. Each Enterprise Core offline
+bundle must carry the exact Talon Core license, this NOTICE file, a dependency
+license inventory, an SBOM, a signed native manifest, and the detached
+signature verification material described by that manifest.
+
+Talon is not licensed under MIT by this repository. The Talon Community Dual
+License Agreement in LICENSE applies unless a separate written commercial
+agreement grants different rights. A manifest, checksum, signature, SBOM, or
+build attestation proves artifact identity; it does not grant license rights.
+
+Third-party components remain subject to their own licenses. See the generated
+license inventory and SBOM in each offline bundle.
