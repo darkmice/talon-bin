@@ -17,7 +17,10 @@ import release
 
 def package(args: argparse.Namespace) -> None:
     lock = release.load_json(args.lock)
-    release.validate_lock(lock, allow_gated=False)
+    if getattr(args, "candidate", False):
+        release.validate_candidate_lock(lock)
+    else:
+        release.validate_lock(lock, allow_gated=False)
     if not release.SHA_RE.fullmatch(args.talon_bin_commit):
         raise release.ReleaseError("talon-bin commit must be a full lowercase SHA")
     if args.output.exists():
@@ -61,7 +64,7 @@ def package(args: argparse.Namespace) -> None:
         shutil.copyfile(source, args.output / source.name)
     shutil.copyfile(args.license, args.output / "LICENSE")
     identity = {
-        "status": "ready",
+        "status": "gated" if getattr(args, "candidate", False) else "ready",
         "release_tag": lock["release_tag"],
         "talon_bin_commit": args.talon_bin_commit,
         "core_repository": lock["core"]["repository"],
@@ -91,6 +94,7 @@ def main() -> None:
     parser.add_argument("--template", type=Path, required=True)
     parser.add_argument("--license", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--candidate", action="store_true")
     package(parser.parse_args())
 
 

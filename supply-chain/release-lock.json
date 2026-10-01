@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "release_tag": "UNRELEASED",
+  "release_tag": "v0.1.53",
   "channel": "enterprise-core",
   "talon_bin_source": "workflow HEAD recorded in each signed manifest; a commit cannot hash a lock file that contains its own hash",
   "core": {

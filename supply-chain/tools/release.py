@@ -369,6 +369,16 @@ def validate_lock(lock: dict[str, Any], allow_gated: bool) -> None:
             raise ReleaseError("release ABI does not match the runtime attestation contract")
 
 
+def validate_candidate_lock(lock: dict[str, Any]) -> None:
+    """Admit signed test candidates, never final release publication."""
+    validate_lock(lock, allow_gated=True)
+    if not TAG_RE.fullmatch(lock["release_tag"]):
+        raise ReleaseError("signed candidate requires an exact vX.Y.Z release tag")
+    signing = lock["signing"]
+    if signing["status"] != "ready" or signing["key_id"] == "UNASSIGNED" or signing["public_key_sha256"] is None:
+        raise ReleaseError("signed candidate requires a pinned ready signing identity")
+
+
 def validate_runtime_attestation_contract(value: Any) -> dict[str, Any]:
     attestation = require_exact_keys(
         value,
@@ -893,10 +903,14 @@ def file_record(path: Path, name: str | None = None) -> dict[str, Any]:
 
 def command_build(args: argparse.Namespace) -> None:
     lock = load_json(args.lock)
-    validate_lock(lock, allow_gated=False)
+    candidate = getattr(args, "candidate", False)
+    if candidate:
+        validate_candidate_lock(lock)
+    else:
+        validate_lock(lock, allow_gated=False)
     validate_prefix_scan_v1_conformance(
         getattr(args, "prefix_scan_conformance", PREFIX_SCAN_V1_CONFORMANCE_PATH),
-        require_ready=True,
+        require_ready=not candidate,
         expected_core=lock["core"],
     )
     epoch = validate_source(lock, args.core_root)
@@ -1264,6 +1278,10 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument("--allow-gated", action="store_true")
     validate.set_defaults(func=lambda args: validate_lock(load_json(args.lock), args.allow_gated))
 
+    candidate_lock = commands.add_parser("validate-candidate-lock")
+    candidate_lock.add_argument("--lock", type=Path, required=True)
+    candidate_lock.set_defaults(func=lambda args: validate_candidate_lock(load_json(args.lock)))
+
     conformance = commands.add_parser("validate-prefix-scan-conformance")
     conformance.add_argument("--path", type=Path, default=PREFIX_SCAN_V1_CONFORMANCE_PATH)
     conformance.add_argument("--require-ready", action="store_true")
@@ -1280,6 +1298,7 @@ def parser() -> argparse.ArgumentParser:
     build.add_argument("--output", type=Path, required=True)
     build.add_argument("--platform", required=True)
     build.add_argument("--artifact-profile", choices=("full", "runtime"), default="full")
+    build.add_argument("--candidate", action="store_true")
     build.add_argument("--build-source", required=True)
     build.add_argument("--workflow-run-id", required=True)
     build.add_argument("--runner", required=True)

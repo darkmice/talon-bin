@@ -42,6 +42,11 @@ Platform domain logic.
 
 The new GitHub workflow only uploads workflow artifacts. It does not create a
 GitHub Release, publish an SDK package, commit, or push.
+Its explicit candidate path requires a versioned target tag and pinned signing
+identity, then challenges the exact Core self-manifest on each target while
+conformance and admission remain gated. The staged Go module identity stays
+`gated`; only a separately reviewed release-ready lock may produce a `ready`
+module for an immutable tag.
 
 The producer matrix builds four artifact targets. The current `talon-sdk-go`
 runtime selector recognizes all four, but this does not establish four-platform
