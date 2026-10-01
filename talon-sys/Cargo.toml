@@ -6,7 +6,7 @@
 #
 [package]
 name = "talon-sys"
-version = "0.1.42"
+version = "0.1.53"
 edition = "2021"
 description = "FFI bindings to the pure Talon Core multi-model data engine"
 license-file = "../LICENSE"
