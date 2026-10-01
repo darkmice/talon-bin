@@ -14,12 +14,13 @@ Platform domain logic.
 - `storage_conditional_batch_v1` remains `gated` until the implementation is in
   a clean, immutable Core commit and the corresponding header hash is locked.
   An uncommitted worktree is never a release source.
-- `runtime_attestation` records the exact Core manifest v1 contract required by
-  the current Go SDK: ABI profile/version, all 23 required symbols, features,
-  capability versions, and their admission states. Its current `gated` status
-  is deliberate: the pinned clean Core commit predates `talon_build_manifest`.
-  The contract fields describe the next release gate and are not evidence that
-  the dirty development checkout was released.
+- `runtime_attestation` records the tagged Core v0.1.1 manifest v2 contract:
+  ABI profile/version, all 24 required symbols, ordered features and
+  capabilities, and the compact-receipt limits included in its build binding.
+  `native_shared_core` v1 is present in that Core source. Its release status
+  remains `gated` until the trusted signing identity, release candidate, and
+  platform verification exist. The tag and local manifest probe are source
+  evidence, not a signed production artifact.
 - `conformance/conditional-prefix-scan-v1.json` records the reviewed v1
   prefix-scan digest vector and all four-target evidence requirements. It is
   deliberately `gated`: a Core PR reference is not a release identity, and it
@@ -37,11 +38,10 @@ Platform domain logic.
 The new GitHub workflow only uploads workflow artifacts. It does not create a
 GitHub Release, publish an SDK package, commit, or push.
 
-The producer matrix builds four artifact targets. That is not the same as four
-Go SDK loader targets: the current `talon-sdk-go` runtime selector implements
-only `darwin/arm64` and `linux/amd64`. macOS AMD64 and Linux ARM64 artifacts must
-not be reported as SDK runtime E2E coverage until the SDK adds those selectors
-and executes their native fixtures.
+The producer matrix builds four artifact targets. The current `talon-sdk-go`
+runtime selector recognizes all four, but this does not establish four-platform
+native E2E coverage. Each target still needs its signed artifact verified and
+loaded by the matching runtime.
 
 ## SDK runtime verification contract
 

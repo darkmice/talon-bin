@@ -39,6 +39,7 @@ SDK_REQUIRED_SYMBOLS = [
     "talon_run_sql_param_bin",
     "talon_kv_set",
     "talon_kv_get",
+    "talon_kv_read_v1",
     "talon_kv_del",
     "talon_kv_incrby",
     "talon_kv_setnx",
@@ -58,12 +59,23 @@ SDK_REQUIRED_SYMBOLS = [
 ]
 
 RUNTIME_FEATURE_CONTRACT = (
-    "native_build_manifest_v1",
+    "native_build_manifest_v2",
     "native_error_codes_v1",
+    "native_kv_read_v1",
     "sql_tlv_v1",
+    "native_sql_session_v1",
+    "native_shared_core_v1",
+    "native_sql_result_v2",
     "storage_conditional_batch_v1",
-    "native_conditional_transaction_v2",
+    "storage_conditional_point_read_v1",
+    "storage_conditional_snapshot_read_v1",
+    "storage_conditional_snapshot_read_v2",
     "storage_conditional_prefix_scan_v1",
+    "native_conditional_transaction_v2",
+    "native_conditional_compact_receipt_v3",
+    "conditional_compact_receipt_v3_wire_v1",
+    "conditional_compact_receipt_v3_digest_v1",
+    "conditional_transaction_command_digest_v1",
     "revision_stream_v1",
     "revision_stream_v2_mmr_proof",
 )
@@ -77,6 +89,10 @@ REVISION_STREAM_V2_GATED_REASON = (
 PREFIX_SCAN_V1_GATED_REASON = (
     "v1 has merged Core and Go SDK implementations but no immutable Core tag, SDK release tag, "
     "cross-target digest conformance, or four-target release evidence"
+)
+PREFIX_SCAN_V1_AVAILABLE_REASON = (
+    "opaque continuation cursors are bounded node-local MVCC snapshot leases and fail closed "
+    "after expiry, restart, or node change"
 )
 PREFIX_SCAN_V1_CONFORMANCE_PATH = Path(__file__).resolve().parents[1] / "conformance" / "conditional-prefix-scan-v1.json"
 PREFIX_SCAN_V1_IMPLEMENTATION_COMMIT = "2f337f524d0edc2dd2a7720b84aa8f036591b61e"
@@ -101,13 +117,32 @@ REVISION_STREAM_V2_HEADER_TOKENS = (
     "snapshot_not_available",
 )
 
-RUNTIME_CAPABILITY_CONTRACT = {
-    "storage_conditional_batch": (1, "available"),
-    "native_conditional_transaction_v2": (2, "available"),
-    "storage_conditional_prefix_scan": (1, "gated"),
-    "revision_stream": (2, "gated"),
-    "native_quorum": (1, "gated"),
-    "server_ha_production_admission": (1, "gated"),
+RUNTIME_CAPABILITY_CONTRACT = (
+    ("native_sql_session", 1, "available"),
+    ("native_shared_core", 1, "available"),
+    ("native_sql_result", 2, "available"),
+    ("native_kv_read", 1, "available"),
+    ("native_goframe_gredis", 1, "gated"),
+    ("storage_conditional_batch", 1, "available"),
+    ("native_conditional_transaction_v2", 2, "available"),
+    ("storage_conditional_compact_receipt", 3, "available"),
+    ("storage_conditional_point_read", 1, "gated"),
+    ("storage_conditional_snapshot_read", 1, "gated"),
+    ("storage_conditional_snapshot_read", 2, "available"),
+    ("storage_conditional_prefix_scan", 1, "available"),
+    ("revision_stream", 2, "gated"),
+    ("native_quorum", 1, "gated"),
+    ("server_ha_production_admission", 1, "gated"),
+)
+
+COMPACT_RECEIPT_LIMIT_CONTRACT = {
+    "max_conditions": 128,
+    "max_mutations": 128,
+    "max_key_bytes": 8192,
+    "max_receipt_bytes": 16777216,
+    "server_http_max_request_bytes": 67108864,
+    "allowed_condition_operators": ["eq", "ne"],
+    "receipt_authentication": "integrity_only_unkeyed_sha256",
 }
 
 EXPECTED_TARGETS = {
@@ -353,8 +388,8 @@ def validate_runtime_attestation_contract(value: Any) -> dict[str, Any]:
         raise ReleaseError("runtime_attestation.status must be gated or ready")
     if not isinstance(attestation["reason"], str) or not attestation["reason"]:
         raise ReleaseError("runtime_attestation.reason must be non-empty")
-    if type(attestation["manifest_version"]) is not int or attestation["manifest_version"] != 1:
-        raise ReleaseError("runtime_attestation.manifest_version must be 1")
+    if type(attestation["manifest_version"]) is not int or attestation["manifest_version"] != 2:
+        raise ReleaseError("runtime_attestation.manifest_version must be 2")
     if (
         attestation["abi_profile"] != "talon-native-c"
         or type(attestation["abi_version"]) is not int
@@ -369,27 +404,30 @@ def validate_runtime_attestation_contract(value: Any) -> dict[str, Any]:
     capabilities = attestation["capabilities"]
     if not isinstance(capabilities, list) or len(capabilities) != len(RUNTIME_CAPABILITY_CONTRACT):
         raise ReleaseError("runtime attestation capabilities are incomplete")
-    seen: set[str] = set()
-    for index, raw in enumerate(capabilities):
-        capability = require_exact_keys(raw, {"name", "version", "status", "reason"}, f"runtime_attestation.capabilities[{index}]")
-        name = capability["name"]
-        if not isinstance(name, str) or name in seen or name not in RUNTIME_CAPABILITY_CONTRACT:
-            raise ReleaseError(f"unknown or duplicate runtime capability {name!r}")
-        seen.add(name)
-        expected_version, expected_status = RUNTIME_CAPABILITY_CONTRACT[name]
-        status = capability["status"]
-        if type(capability["version"]) is not int or capability["version"] != expected_version or status != expected_status:
+    for index, (raw, expected) in enumerate(zip(capabilities, RUNTIME_CAPABILITY_CONTRACT)):
+        label = f"runtime_attestation.capabilities[{index}]"
+        if not isinstance(raw, dict) or set(raw) - {"name", "version", "status", "reason", "limits"} or not {"name", "version", "status"} <= set(raw):
+            raise ReleaseError(f"{label} has invalid fields")
+        name, version, status = expected
+        if (raw["name"], raw["version"], raw["status"]) != expected or type(raw["version"]) is not int:
             raise ReleaseError(f"runtime capability {name} does not match the production contract")
-        reason = capability["reason"]
+        reason = raw.get("reason")
         if status == "gated":
             if not isinstance(reason, str) or not reason.strip():
                 raise ReleaseError(f"gated runtime capability {name} requires a reason")
             if name == "revision_stream" and reason != REVISION_STREAM_V2_GATED_REASON:
                 raise ReleaseError("runtime capability revision_stream gated reason does not match the v2 contract")
-            if name == "storage_conditional_prefix_scan" and reason != PREFIX_SCAN_V1_GATED_REASON:
-                raise ReleaseError("runtime capability storage_conditional_prefix_scan gated reason does not match the v1 contract")
+        elif name == "storage_conditional_prefix_scan":
+            if reason != PREFIX_SCAN_V1_AVAILABLE_REASON:
+                raise ReleaseError("runtime capability storage_conditional_prefix_scan reason does not match the reviewed v1 contract")
         elif reason is not None:
             raise ReleaseError(f"available runtime capability {name} must have a null reason")
+        limits = raw.get("limits")
+        if name == "storage_conditional_compact_receipt":
+            if limits != COMPACT_RECEIPT_LIMIT_CONTRACT:
+                raise ReleaseError("runtime capability storage_conditional_compact_receipt limits do not match the reviewed v3 contract")
+        elif limits is not None:
+            raise ReleaseError(f"runtime capability {name} unexpectedly declares limits")
     return attestation
 
 
@@ -625,13 +663,14 @@ def validate_source(lock: dict[str, Any], core_root: Path) -> int:
         raise ReleaseError("conditional-batch is marked available but absent from the locked ABI header")
     attestation = lock["runtime_attestation"]
     if attestation["status"] == "ready":
+        capability_versions = {name: version for name, version, _ in RUNTIME_CAPABILITY_CONTRACT}
         expected_macros = {
             "TALON_NATIVE_BUILD_MANIFEST_VERSION": attestation["manifest_version"],
             "TALON_NATIVE_ABI_VERSION": attestation["abi_version"],
-            "TALON_STORAGE_CONDITIONAL_BATCH_VERSION": RUNTIME_CAPABILITY_CONTRACT["storage_conditional_batch"][0],
-            "TALON_STORAGE_CONDITIONAL_TRANSACTION_VERSION": RUNTIME_CAPABILITY_CONTRACT["native_conditional_transaction_v2"][0],
-            "TALON_STORAGE_CONDITIONAL_PREFIX_SCAN_VERSION": RUNTIME_CAPABILITY_CONTRACT["storage_conditional_prefix_scan"][0],
-            "TALON_REVISION_STREAM_VERSION": RUNTIME_CAPABILITY_CONTRACT["revision_stream"][0],
+            "TALON_STORAGE_CONDITIONAL_BATCH_VERSION": capability_versions["storage_conditional_batch"],
+            "TALON_STORAGE_CONDITIONAL_TRANSACTION_VERSION": capability_versions["native_conditional_transaction_v2"],
+            "TALON_STORAGE_CONDITIONAL_PREFIX_SCAN_VERSION": capability_versions["storage_conditional_prefix_scan"],
+            "TALON_REVISION_STREAM_VERSION": capability_versions["revision_stream"],
         }
         for macro, expected_version in expected_macros.items():
             match = re.search(rf"^\s*#\s*define\s+{re.escape(macro)}\s+([0-9]+)[uU]?\s*$", header_text, re.MULTILINE)
@@ -677,6 +716,20 @@ def compute_build_binding(manifest: dict[str, Any]) -> str:
         bind(capability["version"])
         bind(capability["status"])
         bind(capability.get("reason") or "")
+        if manifest["manifest_version"] >= 2:
+            limits = capability.get("limits")
+            if limits is None:
+                bind("absent")
+            else:
+                bind("present")
+                for key in (
+                    "max_conditions", "max_mutations", "max_key_bytes",
+                    "max_receipt_bytes", "server_http_max_request_bytes",
+                    "receipt_authentication",
+                ):
+                    bind(limits[key])
+                for operator in limits["allowed_condition_operators"]:
+                    bind(operator)
     return digest.hexdigest()
 
 
@@ -734,7 +787,7 @@ def validate_core_build_manifest(
     for index, raw in enumerate(actual_capabilities):
         if not isinstance(raw, dict):
             raise ReleaseError(f"Core self-manifest capability {index} must be an object")
-        unknown = set(raw) - {"name", "version", "status", "reason"}
+        unknown = set(raw) - {"name", "version", "status", "reason", "limits"}
         missing = {"name", "version", "status"} - set(raw)
         if unknown or missing:
             raise ReleaseError(
@@ -742,8 +795,12 @@ def validate_core_build_manifest(
             )
         if type(raw["version"]) is not int:
             raise ReleaseError(f"Core self-manifest capability {index} version must be an integer")
-        normalized_capabilities.append({**raw, "reason": raw.get("reason")})
-    if normalized_capabilities != contract["capabilities"]:
+        normalized_capabilities.append({**raw, "reason": raw.get("reason"), "limits": raw.get("limits")})
+    expected_capabilities = [
+        {**capability, "reason": capability.get("reason"), "limits": capability.get("limits")}
+        for capability in contract["capabilities"]
+    ]
+    if normalized_capabilities != expected_capabilities:
         raise ReleaseError("Core self-manifest capability versions or gates do not match the release lock")
     binding = manifest["build_binding_sha256"]
     if not isinstance(binding, str) or not HASH_RE.fullmatch(binding) or compute_build_binding(manifest) != binding:
