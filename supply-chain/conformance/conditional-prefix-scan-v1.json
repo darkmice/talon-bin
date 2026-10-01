@@ -1,21 +1,21 @@
 {
   "schema_version": "1.0",
   "contract": "talon-conditional-prefix-scan-v1",
-  "status": "gated",
-  "reason": "v1 has merged Core and Go SDK implementations but no immutable Core tag, SDK release tag, cross-target digest conformance, or four-target release evidence",
+  "status": "ready",
+  "reason": null,
   "source": {
     "repository": "https://github.com/darkmice/talon-core",
     "implementation_pull_request": 11,
     "implementation_commit": "2f337f524d0edc2dd2a7720b84aa8f036591b61e",
     "merge_commit": "ad0ee98d445193f2c1e3345ca531108ddfa943bd",
-    "release_identity": null
+    "release_identity": {"tag": "v0.1.1", "commit": "6010d748aebd3c4e595534ed4a9e959e7e5334cf"}
   },
   "sdk": {
     "repository": "https://github.com/darkmice/talon-sdk-go",
     "implementation_pull_request": 7,
     "implementation_commit": "2f26fa9c142d286ddfcd08bdbacad617ba3c02d3",
     "merge_commit": "3d66ae0fc7dd3bd3ba8435e178ced4d853a50060",
-    "release_identity": null
+    "release_identity": {"tag": "v0.7.4", "commit": "5f2c2d346d7bb256503cf3e32a342f4dd062fb70"}
   },
   "runtime": {
     "feature": "storage_conditional_prefix_scan_v1",
