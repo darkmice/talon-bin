@@ -46,7 +46,8 @@ def main():
                 if child.poll() is not None:
                     raise RuntimeError("released HTTP process exited")
                 try:
-                    with urllib.request.urlopen("http://" + addr + "/health", timeout=1) as response:
+                    health = urllib.request.Request("http://" + addr + "/health", headers={"Authorization": "Bearer " + token})
+                    with urllib.request.urlopen(health, timeout=1) as response:
                         if json.load(response).get("ok"):
                             return child
                 except Exception:
