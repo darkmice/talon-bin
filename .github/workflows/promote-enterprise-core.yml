@@ -181,7 +181,7 @@ jobs:
 
           Four platform-specific full and runtime-only Core bundles plus HTTP Server archives, signed with Ed25519.
 
-Core fixes shared SQL keyword boundaries and enforces schema-owned UNIQUE across all write paths, including legacy metadata recovery before transaction snapshots. Go embedded, GoFrame and HTTP SQL regressions run on each native target.
+          Core fixes shared SQL keyword boundaries and enforces schema-owned UNIQUE across all write paths, including legacy metadata recovery before transaction snapshots. Go embedded, GoFrame and HTTP SQL regressions run on each native target.
           Core: `{lock['core']['tag']}` at `{lock['core']['commit']}`.
           Talon-bin source: `{os.environ['SOURCE_COMMIT']}`.
           Signing public-key DER SHA-256: `{lock['signing']['public_key_sha256']}`.
