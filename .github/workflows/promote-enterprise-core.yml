@@ -141,7 +141,7 @@ jobs:
             exit 1
           fi
           git -C talon-bin switch -c "codex/go-runtime-$RELEASE_TAG"
-          git -C talon-bin rm -- 'go-runtime/native/*/UNRELEASED'
+          git -C talon-bin rm --ignore-unmatch -- 'go-runtime/native/*/UNRELEASED'
           cp -R signed/talon-core-go-runtime-release/. talon-bin/go-runtime/
           python3 - <<'PY'
           import os
