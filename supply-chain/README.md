@@ -53,8 +53,8 @@ nested-module tag.
 
 After a successful `release_mode=release` run from `main`, the separate manual
 `promote-enterprise-core.yml` workflow accepts that exact run ID and its full
-source commit. Run `mode=verify` first: it checks the run identity, all five
-artifacts, every checksum and Ed25519 manifest, and the exact bytes staged in
+source commit. Run `mode=verify` first: it checks the run identity, all nine
+artifacts (four signed platforms, one runtime module and four HTTP acceptance logs), every checksum and Ed25519 manifest, and the exact bytes staged in
 the ready Go module. `mode=publish` repeats those checks, creates a Go module
 branch for review, then uploads a draft GitHub Release, verifies every remote
 asset digest, and publishes it. The module branch is reviewed and merged before
@@ -124,11 +124,30 @@ python3 -m unittest discover -s supply-chain/tests -v
 Production generation requires a release-ready lock and an Ed25519 private key
 provided to Actions as `TALON_RELEASE_SIGNING_KEY_PEM_B64`. The corresponding
 DER public-key SHA-256 must be pinned in the lock before dispatch. A clean,
-tagged Core whose ABI matches `runtime_attestation` is also required. The
-The `v0.1.54` release was built from merged `main` in Actions run
+tagged Core whose ABI matches `runtime_attestation` is also required.
+
+The historical `v0.1.54` release was built from merged `main` in Actions run
 `36887628665`, independently verified in run `36889354570`, and published with
 52 assets. Its `go-runtime/v0.1.54` module tag contains the reviewed signed
 runtime bundles.
+
+The `v0.1.55` release pins Core `v0.1.2` at
+`2b3c6d368aad50fd869aaeff1cfefcca0ada160b` and Talon-bin producer
+`8c32fca3b9b2cd71808d3c88bebb7c5e45ee82bf`. Its
+[release build](https://github.com/darkmice/talon-bin/actions/runs/38056242177)
+passed all 22 jobs: four-target Core SQL/prefix-scan conformance, C ABI,
+signed native SDK, embedded/GoFrame and real HTTP client acceptance. The HTTP
+reports contain eight passing tests, zero skips and four successful restart
+UNIQUE checks. SDK acceptance source is
+`548bfde481d0c4d86e7ee3db0fe6c9d852827438`.
+
+[Independent verify](https://github.com/darkmice/talon-bin/actions/runs/38057432289)
+and [publication](https://github.com/darkmice/talon-bin/actions/runs/38057526478)
+verified every signed archive and exact staged module bytes, then published
+64 remote-digest-checked assets including separate HTTP Server archives.
+The ready Go runtime module is reviewed and merged before its immutable
+`go-runtime/v0.1.55` tag is created. Failed earlier runs are not admission
+and local test replacements are not consumer dependency upgrades.
 
 Offline verification must supply the trusted key and complete release/source/ABI
 identity separately from the bundle. Pinning only a long-lived key would still

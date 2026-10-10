@@ -1,6 +1,6 @@
 # Signed Talon Core Go runtime
 
-`v0.1.54` embeds the four Ed25519-signed Talon Core runtime artifacts.
+`v0.1.55` embeds the four Ed25519-signed Talon Core runtime artifacts.
 Build tags embed only the current platform. `talon-sdk-go` checks the
 pinned signing key, exact release and source identity, every archive
 member, and the loaded Core self-manifest before opening a database.
