@@ -66,14 +66,18 @@ jobs:
           names = {item['name'] for item in assets if not item['expired'] and item['size_in_bytes'] > 0}
           expected_names = {f'talon-enterprise-core-{platform}' for platform in (
               'linux-amd64', 'linux-arm64', 'macos-amd64', 'macos-arm64'
-          )} | {'talon-core-go-runtime-release'}
+          )} | {'talon-core-go-runtime-release'} | {f'talon-http-acceptance-{platform}' for platform in (
+              'linux-amd64', 'linux-arm64', 'macos-amd64', 'macos-arm64'
+          )}
           assert names == expected_names, (names, expected_names)
-          print('release run identity and five artifacts pinned')
+          print('release run identity and nine native/module/HTTP acceptance artifacts pinned')
           PY
           git -C talon-bin merge-base --is-ancestor "$SOURCE_COMMIT" HEAD
           git -C talon-bin diff --quiet "$SOURCE_COMMIT" HEAD -- \
             supply-chain/release-lock.json supply-chain/conformance/conditional-prefix-scan-v1.json \
-            supply-chain/tools/release.py supply-chain/tools/package_go_runtime.py
+            supply-chain/tools/release.py supply-chain/tools/package_go_runtime.py \
+            supply-chain/tools/server_artifact.py supply-chain/tools/sdk_http_acceptance.py \
+            supply-chain/tools/review_release_assets.py
           test "$(git -C talon-bin ls-remote origin refs/heads/main | cut -f1)" = "$(git -C talon-bin rev-parse HEAD)"
           release_tag="$(python3 -c 'import json; print(json.load(open("talon-bin/supply-chain/release-lock.json"))["release_tag"])')"
           [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -175,7 +179,9 @@ jobs:
           tag = os.environ['RELEASE_TAG']
           notes = f'''# Talon {tag} signed Enterprise Core
 
-          Four platform-specific full and runtime-only Core bundles, signed with Ed25519.
+          Four platform-specific full and runtime-only Core bundles plus HTTP Server archives, signed with Ed25519.
+
+Core fixes shared SQL keyword boundaries and enforces schema-owned UNIQUE across all write paths, including legacy metadata recovery before transaction snapshots. Go embedded, GoFrame and HTTP SQL regressions run on each native target.
           Core: `{lock['core']['tag']}` at `{lock['core']['commit']}`.
           Talon-bin source: `{os.environ['SOURCE_COMMIT']}`.
           Signing public-key DER SHA-256: `{lock['signing']['public_key_sha256']}`.

@@ -599,8 +599,8 @@ class ReleaseSupplyChainTest(unittest.TestCase):
 
     def test_tracked_release_lock_preserves_independent_capability_gates(self) -> None:
         lock = release.load_json(MODULE_PATH.parents[1] / "release-lock.json")
-        self.assertEqual(lock["release_tag"], "v0.1.54")
-        self.assertEqual(lock["core"]["tag"], "v0.1.1")
+        self.assertEqual(lock["release_tag"], "v0.1.55")
+        self.assertEqual(lock["core"]["tag"], "v0.1.2")
         self.assertEqual(lock["signing"]["status"], "ready")
         self.assertNotEqual(lock["signing"]["key_id"], "UNASSIGNED")
         self.assertRegex(lock["signing"]["public_key_sha256"], release.HASH_RE)
@@ -913,7 +913,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             release.validate_lock(lock, allow_gated=False)
         lock = release.load_json(self.lock)
         lock["runtime_attestation"]["capabilities"][0]["version"] = True
-        with self.assertRaisesRegex(release.ReleaseError, "native_sql_session"):
+        with self.assertRaisesRegex(release.ReleaseError, "native_sql_context"):
             release.validate_lock(lock, allow_gated=False)
 
         manifest_path = self.build()

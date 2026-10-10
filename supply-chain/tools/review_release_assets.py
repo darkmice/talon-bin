@@ -14,6 +14,7 @@ from pathlib import Path
 import shutil
 
 import release
+import server_artifact
 
 
 def sha256(path: Path) -> str:
@@ -80,6 +81,11 @@ def review(args: argparse.Namespace) -> None:
         actual = {path.name for path in directory.iterdir() if path.is_file() and path.name != "SHA256SUMS.txt"}
         if checked != actual:
             raise release.ReleaseError(f"artifact checksums do not cover exactly {platform}")
+
+        server_artifact.verify(argparse.Namespace(
+            manifest=directory / f"talon-core-server-{platform}.manifest.json",
+            signature=directory / f"talon-core-server-{platform}.manifest.json.sig",
+            public_key=public_key, talon_bin_commit=args.talon_bin_commit, platform=platform), lock)
 
         for profile in ("full", "runtime"):
             prefix = f"libtalon-core-{platform}" if profile == "full" else f"libtalon-core-runtime-{platform}"
