@@ -1,20 +1,20 @@
 {
   "schema_version": "1.0",
-  "release_tag": "v0.1.54",
+  "release_tag": "v0.1.55",
   "channel": "enterprise-core",
   "talon_bin_source": "workflow HEAD recorded in each signed manifest; a commit cannot hash a lock file that contains its own hash",
   "core": {
     "repository": "https://github.com/darkmice/talon-core",
-    "tag": "v0.1.1",
-    "commit": "6010d748aebd3c4e595534ed4a9e959e7e5334cf",
-    "cargo_version": "0.1.1",
-    "cargo_lock_sha256": "07954aee24240ac946fabcbd3196efd79c315b561f2aa2fd49fa1e8d6b320ae2"
+    "tag": "v0.1.2",
+    "commit": "2b3c6d368aad50fd869aaeff1cfefcca0ada160b",
+    "cargo_version": "0.1.2",
+    "cargo_lock_sha256": "9ce889e37a79fa45f26a8b66218c0c629d93638e576acd9e8c364527ff4fdda2"
   },
   "abi": {
     "profile": "talon-native-c",
     "version": 1,
     "header": "include/talon.h",
-    "header_sha256": "455eb8ed49b8d112134e766f0c6a5cbfd0f76bf9285bebcaaae2616b3d1eebe9",
+    "header_sha256": "d0757ac4a2cb1655da8393e0d95d3022b034ce6a56f169bc1916dd3f64c59273",
     "required_symbols": [
       "talon_open",
       "talon_close",
@@ -39,7 +39,11 @@
       "talon_last_error_code",
       "talon_clear_last_error",
       "talon_build_manifest",
-      "talon_execute"
+      "talon_execute",
+      "talon_sql_context_new_v1",
+      "talon_sql_context_cancel_v1",
+      "talon_sql_context_free_v1",
+      "talon_exec_sql_context_v1"
     ],
     "capabilities": {
       "storage_conditional_batch_v1": {
@@ -50,7 +54,7 @@
   },
   "runtime_attestation": {
     "status": "ready",
-    "reason": "Four-target build-manifest challenges, C ABI smoke, Core prefix-scan conformance, and signed SDK native acceptance passed in Actions run 36878054786; release mode repeats these checks from main.",
+    "reason": "Pinned Core 0.1.2 SQL context ABI and unique capability identities; four-target release-mode conformance is mandatory before promotion.",
     "manifest_version": 2,
     "abi_profile": "talon-native-c",
     "abi_version": 1,
@@ -78,7 +82,11 @@
       "talon_last_error_code",
       "talon_clear_last_error",
       "talon_build_manifest",
-      "talon_execute"
+      "talon_execute",
+      "talon_sql_context_new_v1",
+      "talon_sql_context_cancel_v1",
+      "talon_sql_context_free_v1",
+      "talon_exec_sql_context_v1"
     ],
     "features": [
       "native_build_manifest_v2",
@@ -88,6 +96,7 @@
       "native_sql_session_v1",
       "native_shared_core_v1",
       "native_sql_result_v2",
+      "native_sql_context_v1",
       "storage_conditional_batch_v1",
       "storage_conditional_point_read_v1",
       "storage_conditional_snapshot_read_v1",
@@ -102,6 +111,12 @@
       "revision_stream_v2_mmr_proof"
     ],
     "capabilities": [
+      {
+        "name": "native_sql_context",
+        "version": 1,
+        "status": "available",
+        "reason": null
+      },
       {
         "name": "native_sql_session",
         "version": 1,
@@ -213,7 +228,7 @@
     "algorithm": "Ed25519",
     "key_id": "talon-enterprise-core-2026-10-01",
     "public_key_sha256": "617eca89ae8b1e824b5ae764cee171f98eff07e16123e7a0dbead73425b1fa2c",
-    "reason": "Production Ed25519 public key is pinned and the matching GitHub Actions secret is configured; four-target candidate admission passed in Actions run 36878054786."
+    "reason": "Existing production Ed25519 key and matching Actions secret retained; each new release is independently verified before promotion."
   },
   "targets": [
     {

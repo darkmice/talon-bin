@@ -913,7 +913,7 @@ class ReleaseSupplyChainTest(unittest.TestCase):
             release.validate_lock(lock, allow_gated=False)
         lock = release.load_json(self.lock)
         lock["runtime_attestation"]["capabilities"][0]["version"] = True
-        with self.assertRaisesRegex(release.ReleaseError, "native_sql_session"):
+        with self.assertRaisesRegex(release.ReleaseError, "native_sql_context"):
             release.validate_lock(lock, allow_gated=False)
 
         manifest_path = self.build()

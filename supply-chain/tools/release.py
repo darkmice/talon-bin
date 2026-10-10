@@ -56,6 +56,10 @@ SDK_REQUIRED_SYMBOLS = [
     "talon_clear_last_error",
     "talon_build_manifest",
     "talon_execute",
+    "talon_sql_context_new_v1",
+    "talon_sql_context_cancel_v1",
+    "talon_sql_context_free_v1",
+    "talon_exec_sql_context_v1",
 ]
 
 RUNTIME_FEATURE_CONTRACT = (
@@ -66,6 +70,7 @@ RUNTIME_FEATURE_CONTRACT = (
     "native_sql_session_v1",
     "native_shared_core_v1",
     "native_sql_result_v2",
+    "native_sql_context_v1",
     "storage_conditional_batch_v1",
     "storage_conditional_point_read_v1",
     "storage_conditional_snapshot_read_v1",
@@ -118,6 +123,7 @@ REVISION_STREAM_V2_HEADER_TOKENS = (
 )
 
 RUNTIME_CAPABILITY_CONTRACT = (
+    ("native_sql_context", 1, "available"),
     ("native_sql_session", 1, "available"),
     ("native_shared_core", 1, "available"),
     ("native_sql_result", 2, "available"),
