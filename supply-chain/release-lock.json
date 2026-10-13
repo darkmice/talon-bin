@@ -1,14 +1,14 @@
 {
   "schema_version": "1.0",
-  "release_tag": "v0.1.55",
+  "release_tag": "v0.1.56",
   "channel": "enterprise-core",
   "talon_bin_source": "workflow HEAD recorded in each signed manifest; a commit cannot hash a lock file that contains its own hash",
   "core": {
     "repository": "https://github.com/darkmice/talon-core",
-    "tag": "v0.1.2",
-    "commit": "2b3c6d368aad50fd869aaeff1cfefcca0ada160b",
-    "cargo_version": "0.1.2",
-    "cargo_lock_sha256": "9ce889e37a79fa45f26a8b66218c0c629d93638e576acd9e8c364527ff4fdda2"
+    "tag": "v0.1.3",
+    "commit": "441e9f59fc0208fe30f21638fbd32fa60e361aad",
+    "cargo_version": "0.1.3",
+    "cargo_lock_sha256": "d1ba8a7638a60913862882c3d8f4f73ca5218e1d488d19d06e19d437ad81cf59"
   },
   "abi": {
     "profile": "talon-native-c",
@@ -54,7 +54,7 @@
   },
   "runtime_attestation": {
     "status": "ready",
-    "reason": "Pinned Core 0.1.2 SQL context ABI and unique capability identities; four-target release-mode conformance is mandatory before promotion.",
+    "reason": "Pinned Core 0.1.3 complete-data aggregates after reopen; four-target 45+14 Core, signed native and embedded runtime regressions are mandatory before promotion.",
     "manifest_version": 2,
     "abi_profile": "talon-native-c",
     "abi_version": 1,
