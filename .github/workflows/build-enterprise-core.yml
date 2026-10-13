@@ -408,6 +408,8 @@ jobs:
           cargo test --locked --test sql_keyword_boundaries --test sql_unique_constraints \
             --test sql_unique_core_paths --test create_table_keyword_boundaries \
             --test create_index_contract --test unique_index_tx_overlay -- --test-threads=1
+          cargo test --locked --test sql_count_reopen --test scalar_aggregate \
+            --test count_distinct --test sql_aggregate_alias -- --test-threads=1
           cargo test --locked --test server_e2e \
             e2e_http_conditional_prefix_scan_exposes_verified_page_and_cursor -- --exact
 
@@ -531,8 +533,9 @@ jobs:
           TALON_NATIVE_ARTIFACT_PROFILE: runtime
           TALON_TEST_PRODUCTION_NATIVE: '1'
         run: |
+          cp ../talon-bin/supply-chain/tools/count_reopen_acceptance_test.go release_count_reopen_acceptance_test.go
           go test . -count=1 -ldflags=-linkmode=external \
-            -run 'TestParameterizedExecAndQuery|TestKVPublicResultsFromSignedNative|TestNativeKVBinaryRoundTripFromSignedNative'
+            -run 'TestParameterizedExecAndQuery|TestKVPublicResultsFromSignedNative|TestNativeKVBinaryRoundTripFromSignedNative|TestReleaseCountAfter45RowsReopenAnd14More'
           go test ./internal/serverprotocol -count=1 -run '^TestConditionalPrefixScanCoreDigestVector$'
 
   sdk-embedded-release:
@@ -544,6 +547,11 @@ jobs:
         runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel, macos-15]
     runs-on: ${{ matrix.runner }}
     steps:
+      - name: Checkout release acceptance tests
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: talon-bin
+
       - name: Checkout exact SDK candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -569,8 +577,9 @@ jobs:
           TALON_TEST_EMBEDDED_NATIVE: '1'
         run: |
           go mod edit -replace github.com/darkmice/talon-bin/go-runtime=../staged-go-runtime
+          cp ../talon-bin/supply-chain/tools/count_reopen_acceptance_test.go release_count_reopen_acceptance_test.go
           go test . ./goframe -count=1 -ldflags=-linkmode=external \
-            -run 'TestEmbeddedSignedRuntimeOpen|TestEmbeddedSQLConstraintRelease|TestGoFrameSQLConstraintRelease'
+            -run 'TestEmbeddedSignedRuntimeOpen|TestEmbeddedSQLConstraintRelease|TestGoFrameSQLConstraintRelease|TestReleaseCountAfter45RowsReopenAnd14More'
 
   sdk-http-release:
     if: github.event_name == 'workflow_dispatch'
