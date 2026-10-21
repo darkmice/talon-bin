@@ -31,7 +31,6 @@ jobs:
     timeout-minutes: 40
     env:
       RUSTUP_TOOLCHAIN: 1.92.0
-      CARGO_TARGET_DIR: ${{ runner.temp }}/talon-native-target
       CARGO_BUILD_JOBS: 2
       CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       TALON_RUNTIME_PRODUCER_COMMIT: ${{ github.sha }}
@@ -40,7 +39,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Install exact Rust toolchain
-        run: rustup toolchain install 1.92.0 --profile minimal
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/talon-native-target" >> "$GITHUB_ENV"
+          rustup toolchain install 1.92.0 --profile minimal
       - name: Select OpenSSL 3 on macOS
         if: runner.os == 'macOS'
         run: echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
