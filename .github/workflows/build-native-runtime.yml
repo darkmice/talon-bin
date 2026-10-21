@@ -1,0 +1,118 @@
+name: Build signed Talon Native Runtime
+on:
+  push:
+    branches: [main]
+    paths: ['runtime/**', '.github/workflows/build-native-runtime.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-runtime-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: macos-arm64
+            runner: macos-15
+            library: libtalon_runtime.dylib
+          - target: linux-amd64
+            runner: ubuntu-24.04
+            library: libtalon_runtime.so
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+            library: libtalon_runtime.so
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    env:
+      RUSTUP_TOOLCHAIN: 1.92.0
+      CARGO_BUILD_JOBS: 2
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
+      TALON_RUNTIME_PRODUCER_COMMIT: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install exact Rust toolchain
+        run: |
+          echo "CARGO_TARGET_DIR=$RUNNER_TEMP/talon-native-target" >> "$GITHUB_ENV"
+          rustup toolchain install 1.92.0 --profile minimal
+      - name: Select OpenSSL 3 on macOS
+        if: runner.os == 'macOS'
+        run: echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
+      - name: Prepare immutable producer inputs
+        env:
+          GH_TOKEN: ${{ secrets.TALON_AI_TOKEN }}
+        run: |
+          gh auth setup-git --hostname github.com
+          python3 runtime/prepare-native-sources.py
+      - name: Native ABI tests and release build
+        env:
+          GH_TOKEN: ${{ secrets.TALON_AI_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/native-evidence"
+          cargo test --locked --manifest-path runtime/native/Cargo.toml --lib 2>&1 | tee "$RUNNER_TEMP/native-evidence/native-tests.log"
+          cargo build --locked --release --manifest-path runtime/native/Cargo.toml --lib
+          cargo metadata --locked --manifest-path runtime/native/Cargo.toml --format-version 1 > "$RUNNER_TEMP/native-metadata.json"
+      - name: SDK acceptance against actual release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TALON_RUNTIME_LIBRARY="$CARGO_TARGET_DIR/release/${{ matrix.library }}"
+          export TALON_RUNTIME_SHA256="$(python3 -c 'import hashlib,os;print(hashlib.sha256(open(os.environ["TALON_RUNTIME_LIBRARY"],"rb").read()).hexdigest())')"
+          cargo test --locked --manifest-path runtime/sdk/Cargo.toml -p talon-agent-sdk --tests 2>&1 | tee "$RUNNER_TEMP/native-evidence/sdk-profile.log"
+      - name: Resolve fresh public-only consumer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          root=Path(os.environ['RUNNER_TEMP'],'public-consumer');(root/'src').mkdir(parents=True)
+          deps='\n'.join(f'{name} = {{ git = "https://github.com/darkmice/talon-bin", rev = "{os.environ["GITHUB_SHA"]}" }}' for name in ['talon-core-sdk','talon-llm-sdk','talon-agent-sdk'])
+          (root/'Cargo.toml').write_text('[package]\nname="public-consumer"\nversion="0.0.0"\nedition="2021"\n[dependencies]\n'+deps+'\n')
+          (root/'src/main.rs').write_text('fn main() {}\n')
+          PY
+          cargo metadata --manifest-path "$RUNNER_TEMP/public-consumer/Cargo.toml" --format-version 1 > "$RUNNER_TEMP/native-evidence/public-consumer.json"
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          metadata=json.loads(Path(os.environ['RUNNER_TEMP'],'native-evidence/public-consumer.json').read_bytes())
+          names={p['name'] for p in metadata['packages']}
+          assert {'talon-core-sdk','talon-llm-sdk','talon-agent-sdk','talon-runtime-transport'} <= names
+          assert not names & {'talon','talon-agent','talon-ai','talon-llm','talon-session','talon-block'}
+          PY
+      - name: Sign exact native artifact and attestations
+        env:
+          TALON_RELEASE_SIGNING_KEY_PEM_B64: ${{ secrets.TALON_RELEASE_SIGNING_KEY_PEM_B64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY'
+          import base64,os
+          from pathlib import Path
+          key=os.environ.get('TALON_RELEASE_SIGNING_KEY_PEM_B64','')
+          if not key:raise SystemExit('Release signing key is unavailable')
+          Path(os.environ['RUNNER_TEMP'],'native-signing-key.pem').write_bytes(base64.b64decode(key,validate=True))
+          PY
+          openssl pkey -in "$RUNNER_TEMP/native-signing-key.pem" -pubout > "$RUNNER_TEMP/native-public.pem"
+          python3 runtime/package-runtime.py --target '${{ matrix.target }}' \
+            --library "$CARGO_TARGET_DIR/release/${{ matrix.library }}" \
+            --output "$RUNNER_TEMP/native-release" \
+            --private-key "$RUNNER_TEMP/native-signing-key.pem" \
+            --public-key "$RUNNER_TEMP/native-public.pem" \
+            --evidence "$RUNNER_TEMP/native-evidence" \
+            --metadata "$RUNNER_TEMP/native-metadata.json"
+      - name: Remove signing material
+        if: always()
+        run: rm -f "$RUNNER_TEMP/native-signing-key.pem"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: talon-runtime-${{ matrix.target }}
+          path: ${{ runner.temp }}/native-release/
+          if-no-files-found: error

@@ -1,0 +1,48 @@
+# Native producer manifest. Implementation identity: ../sources.lock.json.
+#
+# Copyright (c) 2026 Talon Contributors
+# Author: dark.lijin@gmail.com
+# Licensed under the Talon Community Dual License Agreement.
+# See the LICENSE file in the project root for full license information.
+#
+[package]
+name = "talon-llm"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Unified LLM calling engine for Talon ecosystem: multi-provider, streaming events, model routing, cost metering"
+license = "Commercial"
+publish = false
+readme = "README.md"
+
+[dependencies]
+# Core engine
+talon = { git = "https://github.com/darkmice/talon-core", rev = "441e9f59fc0208fe30f21638fbd32fa60e361aad" }
+# 生成式 UI 块协议（围栏 + 流式解析），基座层信封
+talon-block = { git = "https://github.com/darkmice/talon-block", rev = "f35bb6d66972f3d6b099f2dfdd0141f800750e80" }
+
+# LLM-specific
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"], default-features = false }
+tokio = { version = "1", features = ["rt", "macros", "time", "sync"] }
+tokio-util = "0.7"
+tokio-stream = "0.1"
+futures = { version = "0.3", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+thiserror = "2.0"
+tracing = "0.1"
+async-trait = "0.1"
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+tiktoken-rs = "0.6"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util"] }
+tempfile = "3"
+
+[lib]
+name = "talon_llm"
+path = "src/lib.rs"
+crate-type = ["rlib"]

@@ -9,6 +9,11 @@ That path never resolves `latest` and does not pull AI / LLM / Agent modules.
 The same-process native session design and the separate multi-process service
 boundary are documented in [`docs/native-shared-sessions.md`](docs/native-shared-sessions.md).
 
+Hosts embedding Agent execution can use the versioned native operation ABI and
+thin Rust SDK described in [`runtime/README.md`](runtime/README.md). Its signed
+`runtime-v*` artifacts are a separate profile; pure-Core consumers keep their
+existing pinned Core artifact contract.
+
 ## What is Talon?
 
 Talon is a multi-model data engine designed for AI applications. It combines **SQL + KV + TimeSeries + MessageQueue + Vector** capabilities in a single binary with zero external dependencies.

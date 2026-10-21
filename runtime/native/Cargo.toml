@@ -1,0 +1,36 @@
+[package]
+name = "talon-native-runtime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.92"
+publish = false
+[workspace]
+[patch."https://github.com/darkmice/talon-core"]
+talon = { path = ".sources/talon-core" }
+[lib]
+name = "talon_runtime"
+crate-type = ["cdylib", "rlib"]
+[dependencies]
+talon = { git = "https://github.com/darkmice/talon-core", rev = "441e9f59fc0208fe30f21638fbd32fa60e361aad" }
+talon-agent = { path = ".sources/talon-agent" }
+talon-ai = { path = ".sources/talon-ai" }
+talon-llm = { path = ".sources/talon-llm" }
+sdk-agent = { package = "talon-agent-sdk", path = "../sdk/agent" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["arbitrary_precision"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time", "sync", "macros", "net", "process", "io-util"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+futures = "0.3"
+async-trait = "0.1"
+[dev-dependencies]
+tempfile = "3"
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"
+
+[profile.dev]
+debug = 1
+incremental = true

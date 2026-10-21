@@ -1,0 +1,83 @@
+# Native producer manifest. Implementation identity: ../sources.lock.json.
+#
+# Copyright (c) 2026 Talon Contributors
+# Author: dark.lijin@gmail.com
+# Licensed under the Talon Community Dual License Agreement.
+#
+[package]
+name = "talon-agent"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Agent runtime for Talon ecosystem: Agent = Memory + Soul + Execution Loop. Single/Team orchestration, security engine, sandbox execution."
+license = "Commercial"
+publish = false
+readme = "README.md"
+
+[features]
+default = []
+soul = []
+sandbox = []
+trace = []
+# Off by default: registers the `runSubagent` tool so the LLM can delegate
+# sub-tasks. Disabled until recursive AgentRunner isolation lands, because the
+# current handler only returns mocked data (see agent_tools::handle_run_subagent).
+experimental_subagent = []
+# Off by default: registers the `run_notebook_cell` tool. Disabled until real
+# talon-sandbox execution is wired in, because the current handler returns a
+# MOCK execution result and writes it into the notebook's outputs — feeding the
+# LLM fabricated results (see notebook_tools::handle_run_notebook_cell).
+experimental_notebook_execution = []
+full = []
+
+[dependencies]
+# Talon ecosystem (硬依赖)
+talon = { git = "https://github.com/darkmice/talon-core", rev = "441e9f59fc0208fe30f21638fbd32fa60e361aad" }
+talon-ai = { path = "../talon-ai" }
+talon-llm = { path = "../talon-llm" }
+talon-session = { git = "https://github.com/darkmice/talon-session", rev = "190a61eb55e311a05c9f33b608405bedea55204c" }
+
+# 可选增强 (feature-gated)
+
+# Runtime
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "process", "net", "io-util"] }
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+thiserror = "2.0"
+tracing = "0.1"
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+base64 = "0.22"
+dunce = "1.0.5"
+dirs = "6.0.0"
+tokio-util = "0.7.13"
+sha2 = "0.10"
+# Credential proxy — HTTP server for secrets isolation
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "client", "client-legacy", "http1"] }
+http-body-util = "0.1"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+bytes = "1.7"
+subtle = "2.5"
+url = "2"
+getrandom = "0.2"
+regex = "1"
+
+[target.'cfg(unix)'.dependencies]
+# 用于杀整个进程组(process_group(0) 建组后,kill(-pgid) 回收 `cmd &` 后台孤儿)。
+libc = "0.2"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tempfile = "3"
+reqwest = { version = "0.12", features = ["json"] }
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]

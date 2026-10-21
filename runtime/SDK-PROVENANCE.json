@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "scope": "Public types, configuration, byte adapters and host-side skill utilities only; no Core engine, provider HTTP implementation or Agent loop source.",
+  "upstreamInputs": {
+    "format": 1,
+    "profile": "platform-host-v1",
+    "coreCommit": "441e9f59fc0208fe30f21638fbd32fa60e361aad",
+    "packages": [
+      {
+        "name": "talon-agent",
+        "repository": "darkmice/talon-agent",
+        "baseCommit": "f56557eac17876ab9988697ac702215ec52462b6",
+        "sourceMode": "git_commit",
+        "srcSha256": "71296edfcc5b7a40f241ffdc35ce08d64bed8a023fa161bdd3f88ba91175d9da",
+        "commit": "e7a5f95b4d8b472a2cf3ce8d0875b7ffeae29b09",
+        "manifestSha256": "c8867d47351be42837ca49c2e3e357d3761ecc28427d980a4d265843bedebcbb"
+      },
+      {
+        "name": "talon-ai",
+        "repository": "darkmice/talon-ai",
+        "baseCommit": "fb9fc7fc63230427b8b2b04feb1d4d97a9dac936",
+        "sourceMode": "git_commit",
+        "srcSha256": "c8c55e71fa124349e640122ce93f51c21b28d2c0d7ae8ece076d732e06085f9f",
+        "commit": "a09a024ecd6bc5cbe00f79c4b9f4e51a87ebc6a6",
+        "manifestSha256": "90fff5b16961a70816641d194580782fe3e356f5f0072f5ffd62efc5a7e02bd2"
+      },
+      {
+        "name": "talon-llm",
+        "repository": "darkmice/talon-llm",
+        "baseCommit": "7dbc24e8c723b4933ccbfa9831f7b18807318c64",
+        "sourceMode": "git_commit",
+        "srcSha256": "0bb3d240dabae0078922c265b6fb4f99afe2cf253a715b8eee58024d00491511",
+        "commit": "a8f7f376013371e602e31bf2ed03a070c9d1e4f8",
+        "manifestSha256": "b969eafda6d4d846e87af71a43a87d5a5fcb27b1dc0339a348799b9c0514b229"
+      }
+    ]
+  },
+  "sdkFiles": {
+    "sdk/agent/src/hitl.rs": "d0f5781d80b9b0865d8080a09b8f188180a2fa42ce7cbe346862fb6034c55f18",
+    "sdk/agent/src/lib.rs": "2a3de27ead9f24c56ea9bcd0de48d89faefdf5c2a1549a82310400572155e6c6",
+    "sdk/agent/src/runner.rs": "1f729614c2db0455e064c46058fa65e3b858c3c1952966d02428a596cad5f2cd",
+    "sdk/agent/src/security.rs": "330f7f54b40c55f8b2ae1c901f7accfa1cc31f149504572df8a73e41a62dccb1",
+    "sdk/agent/src/skill/local.rs": "bda08d3dc7b321f0bec2ca486f0dd770c33a7e3d7994874b1196e79abf551204",
+    "sdk/agent/src/skill/mod.rs": "ea08ef59065058fcd7d2cd99de2a9600f8cf4ddd3190b6d4043bbe4941047525",
+    "sdk/agent/src/tool/builtin/definitions.rs": "8fcaf48dae4969ee7c0116606723270f94dc95f8d4f27b5a8f8ec8f7c0cc46c7",
+    "sdk/agent/src/tool/builtin/mod.rs": "0226b827c1890d233dbe05bd55f851acc6468a3cc2de7cd4377830dd33182ff9",
+    "sdk/agent/src/tool/definition.rs": "c4b19f0f53c1cdfca12af3ae18dc5be6d3160f9a4d39c6404591c5660909e37c",
+    "sdk/agent/src/tool/image.rs": "1ccddd06fcf5dd3ea0899756a439f7d904a875c0d172e390f986096ac545cad8",
+    "sdk/agent/src/tool/mod.rs": "9240c98b294a688dd73f2c34cf82caf395264f766c04afa91bedeb5bfc5b3cd3",
+    "sdk/agent/tests/binary_profile.rs": "5b115f43c45fd44cb0b7d06a42e85f6bc0da1d0e28e7f2629c72047a51ff892a",
+    "sdk/agent/tests/native_provider.rs": "c61f04d5bfbd845e13abeab2d8f318bd5beec11b962e199f1f4fc01acee5de7e",
+    "sdk/core/src/lib.rs": "57d8653fa85454d15bd9d04e5a88a966949656ac34b6676fe8694f128d79bc8b",
+    "sdk/core/src/value.rs": "58ee97d4b172ce30dfd464cc8ce7d05d42434158e6ee8f55f637f1b6dfe64491",
+    "sdk/llm/src/config/mod.rs": "a6463203182ce1228960f5d6d42a9162e275d78c9d66613004ee5bed81213d97",
+    "sdk/llm/src/config/model_config.rs": "c8f2ded2747ea43a2adbb84b1fdb5241393a685b9e7d803af4ee0cd658931ba8",
+    "sdk/llm/src/config/routing.rs": "91977ea17f7248a42e1b5ef7621dc8d9b960c7e8023b71f986039297f611bad8",
+    "sdk/llm/src/lib.rs": "87a3403efa76351dca1a56d3c5414b5d6ae75550ccced78bf97142a5cd747be6",
+    "sdk/llm/src/provider/image_generation.rs": "f69b5be00b2fde3a35b77cc251a07c1326255ee62aecaa3a44b87f583b8f6578",
+    "sdk/llm/src/provider/mod.rs": "d112c2e35045f86ca73bce19c323051b8dd99629fbbfee165c5dcc572e5b21ca",
+    "sdk/llm/src/provider/openai_compat.rs": "64c76f739b58fb9a913e1dad2bdb43df3916cb99874b60c11e326e03b38ca502",
+    "sdk/llm/src/provider/trait.rs": "07d493046eeb414c75d23f2e6a886d11d23a4075119368645fa256f80dc435ef",
+    "sdk/llm/src/stream/event.rs": "02af64cebedc5a18699a5be13b941bd1b978b14d6f813c8258156254347db13d",
+    "sdk/transport/src/lib.rs": "49556fb6215b92f97ca37f06da60a2a93e7f1fab8522e777909b2d01f4765dfc"
+  }
+}
