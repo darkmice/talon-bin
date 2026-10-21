@@ -1,0 +1,51 @@
+# Native producer manifest. Implementation identity: ../sources.lock.json.
+#
+# Copyright (c) 2026 Talon Contributors
+# Author: dark.lijin@gmail.com
+# Licensed under the Talon Community Dual License Agreement.
+# See the LICENSE file in the project root for full license information.
+#
+[package]
+name = "talon-ai"
+version = "0.1.2"
+edition = "2021"
+rust-version = "1.75"
+description = "AI-Native engine extension for Talon: Session, Context, Memory, RAG, Agent, Intent, Trace, Embedding Cache"
+license = "Commercial"
+publish = false
+readme = "README.md"
+
+[dependencies]
+# Core engine (public API)
+talon = { git = "https://github.com/darkmice/talon-core", rev = "441e9f59fc0208fe30f21638fbd32fa60e361aad" }
+
+# LLM engine — unified provider abstraction (Phase 1 migration)
+talon-llm = { path = "../talon-llm" }
+
+# AI-specific dependencies
+tiktoken-rs = "0.6"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+lru = "0.12"
+tokio = { version = "1", features = ["rt", "macros", "fs", "time"] }
+tokio-util = "0.7"
+futures = { version = "0.3", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ed25519-dalek = "2.1.1"
+base64 = "0.22.1"
+hex = "0.4.3"
+thiserror = "2.0.18"
+async-trait = "0.1"
+tracing = "0.1"
+
+[dev-dependencies]
+ed25519-dalek = { version = "2.1.1", features = ["rand_core"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt", "macros", "fs", "test-util"] }
+serial_test = "3"
+
+[lib]
+name = "talon_ai"
+path = "src/lib.rs"
+crate-type = ["rlib"]

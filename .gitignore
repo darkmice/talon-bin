@@ -26,3 +26,7 @@ Cargo.lock
 .kiro
 .windsurf
 .docs
+
+# Native producer local verification/cache, never consumer implementation inputs.
+__pycache__/
+/runtime/verification/

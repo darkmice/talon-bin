@@ -1,0 +1,34 @@
+{
+  "format": 1,
+  "profile": "platform-host-v1",
+  "coreCommit": "441e9f59fc0208fe30f21638fbd32fa60e361aad",
+  "packages": [
+    {
+      "name": "talon-agent",
+      "repository": "darkmice/talon-agent",
+      "baseCommit": "f56557eac17876ab9988697ac702215ec52462b6",
+      "sourceMode": "git_commit",
+      "srcSha256": "71296edfcc5b7a40f241ffdc35ce08d64bed8a023fa161bdd3f88ba91175d9da",
+      "commit": "e7a5f95b4d8b472a2cf3ce8d0875b7ffeae29b09",
+      "manifestSha256": "c8867d47351be42837ca49c2e3e357d3761ecc28427d980a4d265843bedebcbb"
+    },
+    {
+      "name": "talon-ai",
+      "repository": "darkmice/talon-ai",
+      "baseCommit": "fb9fc7fc63230427b8b2b04feb1d4d97a9dac936",
+      "sourceMode": "git_commit",
+      "srcSha256": "c8c55e71fa124349e640122ce93f51c21b28d2c0d7ae8ece076d732e06085f9f",
+      "commit": "a09a024ecd6bc5cbe00f79c4b9f4e51a87ebc6a6",
+      "manifestSha256": "90fff5b16961a70816641d194580782fe3e356f5f0072f5ffd62efc5a7e02bd2"
+    },
+    {
+      "name": "talon-llm",
+      "repository": "darkmice/talon-llm",
+      "baseCommit": "7dbc24e8c723b4933ccbfa9831f7b18807318c64",
+      "sourceMode": "git_commit",
+      "srcSha256": "0bb3d240dabae0078922c265b6fb4f99afe2cf253a715b8eee58024d00491511",
+      "commit": "a8f7f376013371e602e31bf2ed03a070c9d1e4f8",
+      "manifestSha256": "b969eafda6d4d846e87af71a43a87d5a5fcb27b1dc0339a348799b9c0514b229"
+    }
+  ]
+}
