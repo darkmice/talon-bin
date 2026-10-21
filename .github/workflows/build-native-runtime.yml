@@ -1,7 +1,7 @@
 name: Build signed Talon Native Runtime
 on:
   push:
-    branches: [codex/platform-native-runtime]
+    branches: [main]
     paths: ['runtime/**', '.github/workflows/build-native-runtime.yml']
   workflow_dispatch:
 permissions:
