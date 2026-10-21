@@ -50,3 +50,5 @@ cargo test --locked --manifest-path runtime/sdk/Cargo.toml -p talon-agent-sdk --
 
 本仓没有自动源码回退。构建/签名证据、SDK fixture、平台启动、真实供应商及生产准入是不同层级。
 新制品必须通过当前目标的字节 ABI、同库回调、流式/错误、预算、审批、HITL、取消、释放及文件策略验收后才可发布。
+
+Supported release targets: macOS Apple Silicon, Linux x86_64 and Linux ARM64. macOS Intel is excluded from future native runtime builds. The signed runtime-v0.1.0 release pins its existing producer commit and is not rebuilt by this packaging-policy change.

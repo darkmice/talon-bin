@@ -18,9 +18,6 @@ jobs:
           - target: macos-arm64
             runner: macos-15
             library: libtalon_runtime.dylib
-          - target: macos-amd64
-            runner: macos-15-intel
-            library: libtalon_runtime.dylib
           - target: linux-amd64
             runner: ubuntu-24.04
             library: libtalon_runtime.so

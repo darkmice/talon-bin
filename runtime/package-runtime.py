@@ -32,7 +32,7 @@ def record(path):return {'path':path.name,'size':path.stat().st_size,'sha256':sh
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ['library','output','private-key','public-key','evidence','metadata']:parser.add_argument('--'+name,type=Path,required=True)
-    parser.add_argument('--target',choices=['macos-arm64','macos-amd64','linux-arm64','linux-amd64'],required=True)
+    parser.add_argument('--target',choices=['macos-arm64','linux-arm64','linux-amd64'],required=True)
     args=parser.parse_args();repo=ROOT.parent;commit=run('git','-C',str(repo),'rev-parse','HEAD').decode().strip()
     require(not run('git','-C',str(repo),'status','--porcelain').strip(),'Producer tree must be clean')
     native=identity(args.library.resolve());sources=json.loads((ROOT/'native/sources.lock.json').read_bytes())
@@ -42,7 +42,7 @@ def main():
     require(native['core']['git_commit']==sources['coreCommit'] and native['core']['git_dirty'] is False,'Core attestation mismatch')
     require(re.fullmatch(r'\d+\.\d+\.\d+',native['runtimeVersion']) is not None,'Invalid runtime version')
     tag='runtime-v'+native['runtimeVersion'];epoch=int(run('git','-C',str(repo),'show','-s','--format=%ct','HEAD'))
-    triples={'macos-arm64':'aarch64-apple-darwin','macos-amd64':'x86_64-apple-darwin','linux-arm64':'aarch64-unknown-linux-gnu','linux-amd64':'x86_64-unknown-linux-gnu'}
+    triples={'macos-arm64':'aarch64-apple-darwin','linux-arm64':'aarch64-unknown-linux-gnu','linux-amd64':'x86_64-unknown-linux-gnu'}
     require(native['core']['target']==triples[args.target],'Native target mismatch')
     key_der=run('openssl','pkey','-pubin','-in',str(args.public_key),'-outform','DER');require(sha(key_der)==KEY_SHA,'Signing key fingerprint mismatch')
     evidence={}
