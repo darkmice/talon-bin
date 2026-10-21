@@ -62,6 +62,7 @@ def main():
     private={package['name']:package for package in sources['packages']}
     for package in metadata['packages']:
         origin=package.get('source')
+        if package['name']=='talon':origin='git+https://github.com/darkmice/talon-core#'+sources['coreCommit']
         if package['name'] in private:origin='git+https://github.com/'+private[package['name']]['repository']+'#'+private[package['name']]['commit']
         if origin is None:origin='git+https://github.com/darkmice/talon-bin#'+commit
         require('file:' not in origin and '@github.com' not in origin,'Unsafe metadata origin')

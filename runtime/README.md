@@ -37,6 +37,8 @@ Profile 覆盖当前平台使用的模型流、工具、审批、技能、本地
 只有生产端/CI 需要私有源码读取权限。`native/sources.lock.json` 固定每个输入的 commit、
 源文件树摘要与 manifest overlay 摘要；`prepare-native-sources.py` 校验并准备忽略的 `.sources/`。
 Core、Session、Block 的不可变依赖同时固定在生产 manifest 和 Cargo.lock 中。
+Core 通过生产端固定的干净 Git 检出构建，避免 Cargo Git 缓存的 `.cargo-ok`
+被引擎自证视为源码修改；不设置 dirty=false 覆盖，也不删除未知修改。
 
 ```sh
 python3 runtime/prepare-native-sources.py

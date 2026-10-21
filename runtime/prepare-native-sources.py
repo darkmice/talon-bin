@@ -26,9 +26,27 @@ def verify(destination,package,manifest):
     if digest((destination/'Cargo.toml').read_bytes())!=package['manifestSha256']:raise ValueError('Producer manifest mismatch: '+package['name'])
     if digest(manifest)!=package['manifestSha256']:raise ValueError('Tracked producer manifest mismatch')
 
+def prepare_core(base,lock,offline):
+    # Cargo's own Git cache adds an untracked .cargo-ok sentinel. Compile Core
+    # from a separate exact clean checkout so its self-attestation remains true;
+    # never override TALON_BUILD_GIT_DIRTY or discard unknown source changes.
+    destination=base/'talon-core'
+    if not destination.exists():
+        if offline:raise ValueError('Clean Core producer checkout is missing')
+        with tempfile.TemporaryDirectory(prefix='.core-',dir=base) as temporary:
+            stage=Path(temporary)/'checkout';stage.mkdir()
+            for args in [('init','-q'),('remote','add','origin','https://github.com/darkmice/talon-core'),('fetch','--depth=1','origin',lock['coreCommit']),('checkout','--detach',lock['coreCommit'])]:
+                subprocess.run(['git','-C',str(stage),*args],check=True,stdout=subprocess.DEVNULL)
+            stage.rename(destination)
+    if destination.is_symlink():raise ValueError('Linked Core producer checkout')
+    commit=subprocess.check_output(['git','-C',str(destination),'rev-parse','HEAD'],text=True).strip()
+    status=subprocess.check_output(['git','-C',str(destination),'status','--porcelain','--untracked-files=normal'])
+    if commit!=lock['coreCommit'] or status:raise ValueError('Core producer checkout is dirty or has the wrong commit')
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--offline',action='store_true');args=parser.parse_args()
     lock=json.loads((ROOT/'native/sources.lock.json').read_bytes());base=ROOT/'native/.sources';base.mkdir(exist_ok=True)
+    prepare_core(base,lock,args.offline)
     for package in lock['packages']:
         name=package['name']
         if package['sourceMode']!='git_commit' or not re.fullmatch(r'[0-9a-f]{40}',package['commit']):raise ValueError('Unpublished source identity')

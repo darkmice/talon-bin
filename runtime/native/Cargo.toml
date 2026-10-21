@@ -5,6 +5,8 @@ edition = "2021"
 rust-version = "1.92"
 publish = false
 [workspace]
+[patch."https://github.com/darkmice/talon-core"]
+talon = { path = ".sources/talon-core" }
 [lib]
 name = "talon_runtime"
 crate-type = ["cdylib", "rlib"]

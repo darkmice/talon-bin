@@ -2632,7 +2632,6 @@ dependencies = [
 [[package]]
 name = "talon"
 version = "0.1.3"
-source = "git+https://github.com/darkmice/talon-core?rev=441e9f59fc0208fe30f21638fbd32fa60e361aad#441e9f59fc0208fe30f21638fbd32fa60e361aad"
 dependencies = [
  "crossterm",
  "fjall",
